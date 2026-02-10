@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["REDIS_SCOPE_DEFAULT"],"struct":["ClientCertificate","EntraIdCredentialsProvider"]};

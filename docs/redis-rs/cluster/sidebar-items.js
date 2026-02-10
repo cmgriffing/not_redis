@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["cluster_pipe"],"struct":["ClusterClient","ClusterClientBuilder","ClusterConfig","ClusterConnection","ClusterPipeline"],"trait":["Connect"]};

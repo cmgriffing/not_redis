@@ -1,0 +1,150 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Azure Entra ID authentication support for Redis"><title>redis::entra_id - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-b7b9f40b.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="redis" data-themes="" data-resource-suffix="" data-rustdoc-version="1.95.0-nightly (18d13b533 2026-02-09)" data-channel="nightly" data-search-js="search-fb33671b.js" data-stringdex-js="stringdex-b897f86f.js" data-settings-js="settings-170eb4bf.js" ><script src="../../static.files/storage-f9617a14.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../static.files/main-12f88f4f.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-f7c3ffd8.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc mod"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Module entra_id</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../redis/index.html">redis</a><span class="version">1.0.3</span></h2></div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module entra_<wbr>id</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#overview" title="Overview">Overview</a></li><li><a href="#features" title="Features">Features</a></li><li><a href="#architecture" title="Architecture">Architecture</a><ul><li><a href="#streaming-credentials-pattern" title="Streaming Credentials Pattern">Streaming Credentials Pattern</a></li></ul></li><li><a href="#quick-start" title="Quick Start">Quick Start</a><ul><li><a href="#enable-the-feature" title="Enable the Feature">Enable the Feature</a></li><li><a href="#basic-usage-with-developertoolscredential" title="Basic Usage with DeveloperToolsCredential">Basic Usage with DeveloperToolsCredential</a></li></ul></li><li><a href="#authentication-flows" title="Authentication Flows">Authentication Flows</a><ul><li><a href="#developertoolscredential-recommended-for-development" title="DeveloperToolsCredential (Recommended for Development)">DeveloperToolsCredential (Recommended for Development)</a></li><li><a href="#service-principal-with-client-secret" title="Service Principal with Client Secret">Service Principal with Client Secret</a></li><li><a href="#service-principal-with-certificate" title="Service Principal with Certificate">Service Principal with Certificate</a></li><li><a href="#managed-identity" title="Managed Identity">Managed Identity</a></li></ul></li><li><a href="#advanced-configuration" title="Advanced Configuration">Advanced Configuration</a><ul><li><a href="#token-refresh-with-custom-configuration" title="Token Refresh with Custom Configuration">Token Refresh with Custom Configuration</a></li></ul></li><li><a href="#error-handling" title="Error Handling">Error Handling</a></li><li><a href="#best-practices" title="Best Practices">Best Practices</a><ul><li><a href="#use-appropriate-credential-types" title="Use Appropriate Credential Types">Use Appropriate Credential Types</a></li><li><a href="#security-considerations" title="Security Considerations">Security Considerations</a></li></ul></li><li><a href="#compatibility" title="Compatibility">Compatibility</a></li><li><a href="#troubleshooting" title="Troubleshooting">Troubleshooting</a><ul><li><a href="#common-issues" title="Common Issues">Common Issues</a></li></ul></li></ul><h3><a href="#structs">Module Items</a></h3><ul class="block"><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#constants" title="Constants">Constants</a></li></ul></section><div id="rustdoc-modnav"><h2 class="in-crate"><a href="../index.html">In crate redis</a></h2></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><div class="rustdoc-breadcrumbs"><a href="../index.html">redis</a></div><h1>Module <span>entra_<wbr>id</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../src/redis/entra_id.rs.html#1-1167">Source</a> </span></div><span class="item-info"><div class="stab portability">Available on <strong>crate feature <code>entra-id</code></strong> only.</div></span><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Azure Entra ID authentication support for Redis</p>
+<p>This module provides token-based authentication using Azure Entra ID (formerly Azure Active Directory),
+enabling secure, dynamic authentication for Redis connections with automatic token refresh and
+streaming credentials support.</p>
+<h2 id="overview"><a class="doc-anchor" href="#overview">§</a>Overview</h2>
+<p>Token-based authentication allows you to authenticate to Redis using Azure Entra ID tokens instead
+of static passwords. This provides several benefits:</p>
+<ul>
+<li><strong>Enhanced Security</strong>: Tokens have limited lifetimes and can be automatically refreshed</li>
+<li><strong>Centralized Identity Management</strong>: Leverage Azure Entra ID for user and service authentication</li>
+<li><strong>Audit and Compliance</strong>: Better tracking and auditing of authentication events</li>
+<li><strong>Zero-Trust Architecture</strong>: Support for modern security models</li>
+</ul>
+<h2 id="features"><a class="doc-anchor" href="#features">§</a>Features</h2>
+<ul>
+<li><strong>Automatic Token Refresh &amp; Streaming of Credentials</strong>: Seamlessly handle token expiration and stream updated credentials to prevent connection errors due to token expiration</li>
+<li><strong>Multiple Authentication Flows</strong>: Service principals, managed identities, and custom <code>TokenCredential</code> implementations</li>
+<li><strong>Configurable Refresh Policies</strong>: Customizable refresh thresholds and retry behavior via <a href="../auth_management/struct.RetryConfig.html" title="struct redis::auth_management::RetryConfig"><code>RetryConfig</code></a></li>
+<li><strong>Async-First Design</strong>: Full async/await support for non-blocking operations with seamless integration for multiplexed connections</li>
+</ul>
+<h2 id="architecture"><a class="doc-anchor" href="#architecture">§</a>Architecture</h2><h3 id="streaming-credentials-pattern"><a class="doc-anchor" href="#streaming-credentials-pattern">§</a>Streaming Credentials Pattern</h3>
+<ol>
+<li>The <a href="struct.EntraIdCredentialsProvider.html" title="struct redis::entra_id::EntraIdCredentialsProvider"><code>EntraIdCredentialsProvider</code></a> implements the <a href="../auth/trait.StreamingCredentialsProvider.html" title="trait redis::auth::StreamingCredentialsProvider"><code>StreamingCredentialsProvider</code></a> trait, which allows clients to subscribe to a stream of credentials.</li>
+<li>An <a href="struct.EntraIdCredentialsProvider.html" title="struct redis::entra_id::EntraIdCredentialsProvider"><code>EntraIdCredentialsProvider</code></a> can be created with one of the public constructors. Each of them creates a specific <code>TokenCredential</code> implementation from the <code>azure_identity</code> crate.</li>
+<li>The <a href="struct.EntraIdCredentialsProvider.html" title="struct redis::entra_id::EntraIdCredentialsProvider"><code>EntraIdCredentialsProvider</code></a> must be started by calling its <code>start()</code> method, which begins a background task for token refresh.</li>
+<li>The <a href="../struct.Client.html" title="struct redis::Client"><code>Client</code></a> holds a <a href="../auth/trait.StreamingCredentialsProvider.html" title="trait redis::auth::StreamingCredentialsProvider"><code>StreamingCredentialsProvider</code></a> and uses it to authenticate connections.</li>
+<li>A <a href="../struct.Client.html" title="struct redis::Client"><code>Client</code></a> can be instantiated with a credentials provider via the <a href="../struct.Client.html#method.open_with_credentials_provider" title="associated function redis::Client::open_with_credentials_provider"><code>Client::open_with_credentials_provider()</code></a> constructor. A credentials provider can also be added to an existing client using the client’s <code>with_credentials_provider()</code> function.</li>
+<li>The <a href="struct.EntraIdCredentialsProvider.html" title="struct redis::entra_id::EntraIdCredentialsProvider"><code>EntraIdCredentialsProvider</code></a> keeps the current token and provides it to a <a href="../struct.Client.html" title="struct redis::Client"><code>Client</code></a> when it establishes a new multiplexed connection. Before the connection gets established, it creates a background task, which subscribes for credential updates.</li>
+<li>When the token is refreshed, the <a href="struct.EntraIdCredentialsProvider.html" title="struct redis::entra_id::EntraIdCredentialsProvider"><code>EntraIdCredentialsProvider</code></a> notifies all subscribers with the new credentials.</li>
+<li>When a subscriber receives the new credentials, it uses them to re-authenticate itself.</li>
+</ol>
+<h2 id="quick-start"><a class="doc-anchor" href="#quick-start">§</a>Quick Start</h2><h3 id="enable-the-feature"><a class="doc-anchor" href="#enable-the-feature">§</a>Enable the Feature</h3>
+<p>Add the <code>entra-id</code> feature to your <code>Cargo.toml</code>.</p>
+<h3 id="basic-usage-with-developertoolscredential"><a class="doc-anchor" href="#basic-usage-with-developertoolscredential">§</a>Basic Usage with DeveloperToolsCredential</h3>
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>redis::{Client, EntraIdCredentialsProvider, RetryConfig};
+
+<span class="comment">// Create the credentials provider using the DeveloperToolsCredential
+</span><span class="kw">let </span><span class="kw-2">mut </span>provider = EntraIdCredentialsProvider::new_developer_tools()<span class="question-mark">?</span>;
+provider.start(RetryConfig::default());
+
+<span class="comment">// Create Redis client with credentials provider
+</span><span class="kw">let </span>client = Client::open_with_credentials_provider(
+    <span class="string">"redis://your-redis-instance.com:6380"</span>,
+    provider
+)<span class="question-mark">?</span>;
+
+<span class="comment">// Use the client to get a multiplexed connection
+</span><span class="kw">let </span><span class="kw-2">mut </span>con = client.get_multiplexed_async_connection().<span class="kw">await</span><span class="question-mark">?</span>;
+redis::cmd(<span class="string">"SET"</span>)
+    .arg(<span class="string">"my_key"</span>)
+    .arg(<span class="number">42i32</span>)
+    .exec_async(<span class="kw-2">&amp;mut </span>con)
+    .<span class="kw">await</span><span class="question-mark">?</span>;
+<span class="kw">let </span>result: <span class="prelude-ty">Option</span>&lt;String&gt; = redis::cmd(<span class="string">"GET"</span>)
+    .arg(<span class="string">"my_key"</span>)
+    .query_async(<span class="kw-2">&amp;mut </span>con)
+    .<span class="kw">await</span><span class="question-mark">?</span>;</code></pre></div><h2 id="authentication-flows"><a class="doc-anchor" href="#authentication-flows">§</a>Authentication Flows</h2><h3 id="developertoolscredential-recommended-for-development"><a class="doc-anchor" href="#developertoolscredential-recommended-for-development">§</a>DeveloperToolsCredential (Recommended for Development)</h3>
+<p>The <code>DeveloperToolsCredential</code> (from <code>azure_identity</code>) tries the following credential types, in this order, stopping when one provides a token:</p>
+<ul>
+<li><code>AzureCliCredential</code></li>
+<li><code>AzureDeveloperCliCredential</code></li>
+</ul>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">let </span><span class="kw-2">mut </span>provider = EntraIdCredentialsProvider::new_developer_tools()<span class="question-mark">?</span>;
+provider.start(RetryConfig::default());</code></pre></div><h3 id="service-principal-with-client-secret"><a class="doc-anchor" href="#service-principal-with-client-secret">§</a>Service Principal with Client Secret</h3>
+<p>For production applications:</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">let </span><span class="kw-2">mut </span>provider = EntraIdCredentialsProvider::new_client_secret(
+    <span class="string">"your-tenant-id"</span>.to_string(),
+    <span class="string">"your-client-id"</span>.to_string(),
+    <span class="string">"your-client-secret"</span>.to_string(),
+)<span class="question-mark">?</span>;
+provider.start(RetryConfig::default());</code></pre></div><h3 id="service-principal-with-certificate"><a class="doc-anchor" href="#service-principal-with-certificate">§</a>Service Principal with Certificate</h3>
+<p>For enhanced security:</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="comment">// Load certificate from file
+</span><span class="kw">let </span>certificate_base64 = fs::read_to_string(<span class="string">"path/to/base64_pkcs12_certificate"</span>)
+    .expect(<span class="string">"Base64 PKCS12 certificate not found."</span>)
+    .trim()
+    .to_string();
+
+<span class="comment">// Create the credentials provider using service principal with client certificate
+</span><span class="kw">let </span><span class="kw-2">mut </span>provider = EntraIdCredentialsProvider::new_client_certificate(
+    <span class="string">"your-tenant-id"</span>.to_string(),
+    <span class="string">"your-client-id"</span>.to_string(),
+    ClientCertificate {
+        base64_pkcs12: certificate_base64, <span class="comment">// Base64 encoded PKCS12 data
+        </span>password: <span class="prelude-val">None</span>,
+    },
+)<span class="question-mark">?</span>;
+provider.start(RetryConfig::default());</code></pre></div><h3 id="managed-identity"><a class="doc-anchor" href="#managed-identity">§</a>Managed Identity</h3>
+<p>For Azure-hosted applications:</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="comment">// System-assigned managed identity
+</span><span class="kw">let </span><span class="kw-2">mut </span>provider = EntraIdCredentialsProvider::new_system_assigned_managed_identity()<span class="question-mark">?</span>;
+provider.start(RetryConfig::default());
+
+<span class="comment">// User-assigned managed identity
+</span><span class="kw">let </span><span class="kw-2">mut </span>provider = EntraIdCredentialsProvider::new_user_assigned_managed_identity()<span class="question-mark">?</span>;
+provider.start(RetryConfig::default());</code></pre></div>
+<p>For user-assigned managed identity with custom scopes and identity specification:</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">let </span><span class="kw-2">mut </span>provider = EntraIdCredentialsProvider::new_user_assigned_managed_identity_with_scopes(
+    <span class="macro">vec!</span>[<span class="string">"your-scope"</span>.to_string()],
+    <span class="prelude-val">Some</span>(ManagedIdentityCredentialOptions {
+        <span class="comment">// Specify the user-assigned identity using one of:
+        </span>user_assigned_id: <span class="prelude-val">Some</span>(UserAssignedId::ClientId(<span class="string">"your-client-id"</span>.to_string())),
+        <span class="comment">// or: user_assigned_id: Some(UserAssignedId::ObjectId("your-object-id".to_string())),
+        // or: user_assigned_id: Some(UserAssignedId::ResourceId("your-resource-id".to_string())),
+        </span>..Default::default()
+    }),
+)<span class="question-mark">?</span>;
+provider.start(RetryConfig::default());</code></pre></div><h2 id="advanced-configuration"><a class="doc-anchor" href="#advanced-configuration">§</a>Advanced Configuration</h2><h3 id="token-refresh-with-custom-configuration"><a class="doc-anchor" href="#token-refresh-with-custom-configuration">§</a>Token Refresh with Custom Configuration</h3>
+<p>The token refresh behavior can be customized by providing a <a href="../auth_management/struct.RetryConfig.html" title="struct redis::auth_management::RetryConfig"><code>RetryConfig</code></a> when starting the provider:</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">let </span><span class="kw-2">mut </span>provider = EntraIdCredentialsProvider::new_developer_tools()<span class="question-mark">?</span>;
+
+<span class="kw">let </span>retry_config = RetryConfig::default()
+    .set_number_of_retries(<span class="number">3</span>)
+    .set_min_delay(Duration::from_millis(<span class="number">100</span>))
+    .set_max_delay(Duration::from_secs(<span class="number">30</span>))
+    .set_exponent_base(<span class="number">2.0</span>);
+
+provider.start(retry_config);</code></pre></div><h2 id="error-handling"><a class="doc-anchor" href="#error-handling">§</a>Error Handling</h2>
+<p>The library provides comprehensive error handling for authentication and token refresh failures.
+The background token refresh service will automatically retry failed token refreshes according to the retry configuration.
+Once the maximum number of attempts is reached, the service will stop retrying and the underlying error will be propagated to the subscribers.</p>
+<h2 id="best-practices"><a class="doc-anchor" href="#best-practices">§</a>Best Practices</h2><h3 id="use-appropriate-credential-types"><a class="doc-anchor" href="#use-appropriate-credential-types">§</a>Use Appropriate Credential Types</h3>
+<ul>
+<li><strong>Development</strong>: <code>DeveloperToolsCredential</code> (from <code>azure_identity</code>)</li>
+<li><strong>Production Services</strong>: Service Principal with certificate</li>
+<li><strong>Azure-hosted Apps</strong>: Managed Identity</li>
+</ul>
+<h3 id="security-considerations"><a class="doc-anchor" href="#security-considerations">§</a>Security Considerations</h3>
+<ul>
+<li>Store client secrets securely (Azure Key Vault, environment variables)</li>
+<li>Use certificates instead of secrets when possible</li>
+</ul>
+<h2 id="compatibility"><a class="doc-anchor" href="#compatibility">§</a>Compatibility</h2>
+<ul>
+<li><strong>Redis Versions</strong>: Compatible with Redis 6.0+ (ACL support required)</li>
+<li><strong>Azure Redis</strong>: Fully compatible with Azure Cache for Redis</li>
+</ul>
+<h2 id="troubleshooting"><a class="doc-anchor" href="#troubleshooting">§</a>Troubleshooting</h2><h3 id="common-issues"><a class="doc-anchor" href="#common-issues">§</a>Common Issues</h3>
+<ol>
+<li><strong>“Authentication failed”</strong>: Check your credentials and permissions</li>
+<li><strong>“Token expired”</strong>: Ensure automatic refresh is properly configured</li>
+<li><strong>“Connection timeout”</strong>: Check network connectivity and Redis endpoint</li>
+</ol>
+</div></details><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><dl class="item-table"><dt><a class="struct" href="struct.ClientCertificate.html" title="struct redis::entra_id::ClientCertificate">Client<wbr>Certificate</a></dt><dd>A client certificate in PKCS12 (PFX) that can be used for client certificate authentication.</dd><dt><a class="struct" href="struct.EntraIdCredentialsProvider.html" title="struct redis::entra_id::EntraIdCredentialsProvider">Entra<wbr>IdCredentials<wbr>Provider</a></dt><dd>Entra ID credentials provider that uses Azure Identity for authentication</dd></dl><h2 id="constants" class="section-header">Constants<a href="#constants" class="anchor">§</a></h2><dl class="item-table"><dt><a class="constant" href="constant.REDIS_SCOPE_DEFAULT.html" title="constant redis::entra_id::REDIS_SCOPE_DEFAULT">REDIS_<wbr>SCOPE_<wbr>DEFAULT</a></dt><dd>The default Redis scope for Azure Managed Redis</dd></dl></section></div></main></body></html>

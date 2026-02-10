@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["EmbeddingInput","VectorAddInput","VectorQuantization","VectorSimilaritySearchInput"],"struct":["VAddOptions","VEmbOptions","VSimOptions"]};

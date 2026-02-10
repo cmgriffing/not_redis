@@ -1,0 +1,106 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Defines a Sentinel type that connects to Redis sentinels and creates clients to master or replica nodes."><title>redis::sentinel - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-b7b9f40b.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="redis" data-themes="" data-resource-suffix="" data-rustdoc-version="1.95.0-nightly (18d13b533 2026-02-09)" data-channel="nightly" data-search-js="search-fb33671b.js" data-stringdex-js="stringdex-b897f86f.js" data-settings-js="settings-170eb4bf.js" ><script src="../../static.files/storage-f9617a14.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../static.files/main-12f88f4f.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-f7c3ffd8.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc mod"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Module sentinel</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../redis/index.html">redis</a><span class="version">1.0.3</span></h2></div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module sentinel</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#example" title="Example">Example</a></li><li><a href="#example-1" title="Example">Example</a></li><li><a href="#example-2" title="Example">Example</a></li><li><a href="#example-3" title="Example">Example</a></li><li><a href="#example-4" title="Example">Example</a></li></ul><h3><a href="#structs">Module Items</a></h3><ul class="block"><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#enums" title="Enums">Enums</a></li></ul></section><div id="rustdoc-modnav"><h2 class="in-crate"><a href="../index.html">In crate redis</a></h2></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><div class="rustdoc-breadcrumbs"><a href="../index.html">redis</a></div><h1>Module <span>sentinel</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../src/redis/sentinel.rs.html#1-1573">Source</a> </span></div><span class="item-info"><div class="stab portability">Available on <strong>crate feature <code>sentinel</code></strong> only.</div></span><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Defines a Sentinel type that connects to Redis sentinels and creates clients to
+master or replica nodes.</p>
+<h2 id="example"><a class="doc-anchor" href="#example">§</a>Example</h2>
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>redis::TypedCommands;
+<span class="kw">use </span>redis::sentinel::Sentinel;
+
+<span class="kw">let </span>nodes = <span class="macro">vec!</span>[<span class="string">"redis://127.0.0.1:6379/"</span>, <span class="string">"redis://127.0.0.1:6378/"</span>, <span class="string">"redis://127.0.0.1:6377/"</span>];
+<span class="kw">let </span><span class="kw-2">mut </span>sentinel = Sentinel::build(nodes).unwrap();
+<span class="kw">let </span><span class="kw-2">mut </span>master = sentinel.master_for(<span class="string">"master_name"</span>, <span class="prelude-val">None</span>).unwrap().get_connection().unwrap();
+<span class="kw">let </span><span class="kw-2">mut </span>replica = sentinel.replica_for(<span class="string">"master_name"</span>, <span class="prelude-val">None</span>).unwrap().get_connection().unwrap();
+
+master.set(<span class="string">"test"</span>, <span class="string">"test_data"</span>).unwrap();
+<span class="kw">let </span>rv = replica.get(<span class="string">"test"</span>).unwrap().unwrap();
+
+<span class="macro">assert_eq!</span>(rv, <span class="string">"test_data"</span>);</code></pre></div>
+<p>There is also a SentinelClient which acts like a regular Client, providing the
+<code>get_connection</code> and <code>get_async_connection</code> methods, internally using the Sentinel
+type to create clients on demand for the desired node type (Master or Replica).</p>
+<h2 id="example-1"><a class="doc-anchor" href="#example-1">§</a>Example</h2>
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>redis::TypedCommands;
+<span class="kw">use </span>redis::sentinel::{ SentinelServerType, SentinelClient };
+
+<span class="kw">let </span>nodes = <span class="macro">vec!</span>[<span class="string">"redis://127.0.0.1:6379/"</span>, <span class="string">"redis://127.0.0.1:6378/"</span>, <span class="string">"redis://127.0.0.1:6377/"</span>];
+<span class="kw">let </span><span class="kw-2">mut </span>master_client = SentinelClient::build(nodes.clone(), String::from(<span class="string">"master_name"</span>), <span class="prelude-val">None</span>, SentinelServerType::Master).unwrap();
+<span class="kw">let </span><span class="kw-2">mut </span>replica_client = SentinelClient::build(nodes, String::from(<span class="string">"master_name"</span>), <span class="prelude-val">None</span>, SentinelServerType::Replica).unwrap();
+<span class="kw">let </span><span class="kw-2">mut </span>master_conn = master_client.get_connection().unwrap();
+<span class="kw">let </span><span class="kw-2">mut </span>replica_conn = replica_client.get_connection().unwrap();
+
+master_conn.set(<span class="string">"test"</span>, <span class="string">"test_data"</span>).unwrap();
+<span class="kw">let </span>rv = replica_conn.get(<span class="string">"test"</span>).unwrap().unwrap();
+
+<span class="macro">assert_eq!</span>(rv, <span class="string">"test_data"</span>);</code></pre></div>
+<p>If the sentinel’s servers are using TLS or require authentication, a full
+SentinelNodeConnectionInfo struct may be used instead of just the master’s name.
+It’s important to note that the sentinel nodes may have different usernames or passwords,
+so the authentication info for them must be entered separately.</p>
+<h2 id="example-2"><a class="doc-anchor" href="#example-2">§</a>Example</h2>
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>redis::{ Commands, ConnectionAddr, ConnectionInfo, RedisConnectionInfo };
+<span class="kw">use </span>redis::sentinel::{ Sentinel, SentinelNodeConnectionInfo };
+
+<span class="kw">let </span>nodes = <span class="macro">vec!</span>[<span class="string">"redis://sentinel_user:sentinel_pass@127.0.0.1"</span>];
+<span class="kw">let </span><span class="kw-2">mut </span>sentinel = Sentinel::build(nodes).unwrap();
+
+<span class="kw">let </span>redis_connection_info = RedisConnectionInfo::default()
+    .set_db(<span class="number">1</span>)
+    .set_username(<span class="string">"user"</span>)
+    .set_password(<span class="string">"pass"</span>);
+<span class="kw">let </span>sentinel_master_node_connection_info = SentinelNodeConnectionInfo::default()
+    .set_redis_connection_info(redis_connection_info);
+<span class="kw">let </span><span class="kw-2">mut </span>master_with_auth = sentinel
+    .master_for(
+        <span class="string">"master_name"</span>,
+        <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>sentinel_master_node_connection_info),
+    )
+    .unwrap()
+    .get_connection()
+    .unwrap();
+
+<span class="kw">let </span>sentinel_replica_node_connection_info = SentinelNodeConnectionInfo::default()
+    .set_tls_mode(redis::TlsMode::Secure);
+<span class="kw">let </span><span class="kw-2">mut </span>replica_with_tls = sentinel
+    .master_for(
+        <span class="string">"master_name"</span>,
+        <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>sentinel_replica_node_connection_info),
+    )
+    .unwrap()
+    .get_connection()
+    .unwrap();</code></pre></div><h2 id="example-3"><a class="doc-anchor" href="#example-3">§</a>Example</h2>
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>redis::{ Commands, RedisConnectionInfo };
+<span class="kw">use </span>redis::sentinel::{ SentinelServerType, SentinelClient, SentinelNodeConnectionInfo };
+
+<span class="kw">let </span>nodes = <span class="macro">vec!</span>[<span class="string">"redis://127.0.0.1:6379/"</span>, <span class="string">"redis://127.0.0.1:6378/"</span>, <span class="string">"redis://127.0.0.1:6377/"</span>];
+<span class="kw">let </span>redis_connection_info = RedisConnectionInfo::default()
+    .set_username(<span class="string">"user"</span>)
+    .set_password(<span class="string">"pass"</span>);
+<span class="kw">let </span>sentinel_node_connection_info = SentinelNodeConnectionInfo::default()
+    .set_tls_mode(redis::TlsMode::Insecure)
+    .set_redis_connection_info(redis_connection_info);
+<span class="kw">let </span><span class="kw-2">mut </span>master_client = SentinelClient::build(
+    nodes,
+    String::from(<span class="string">"master1"</span>),
+    <span class="prelude-val">Some</span>(sentinel_node_connection_info),
+    redis::sentinel::SentinelServerType::Master,
+)
+.unwrap();</code></pre></div>
+<p>In addition, there is a <code>SentinelClientBuilder</code> to provide the most fine-grained configuration possibilities</p>
+<h2 id="example-4"><a class="doc-anchor" href="#example-4">§</a>Example</h2>
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>redis::sentinel::SentinelClientBuilder;
+<span class="kw">use </span>redis::{ConnectionAddr, TlsCertificates};
+<span class="kw">let </span>nodes = <span class="macro">vec!</span>[ConnectionAddr::Tcp(String::from(<span class="string">"redis://127.0.0.1"</span>), <span class="number">6379</span>), ConnectionAddr::Tcp(String::from(<span class="string">"redis://127.0.0.1"</span>), <span class="number">6378</span>), ConnectionAddr::Tcp(String::from(<span class="string">"redis://127.0.0.1"</span>), <span class="number">6377</span>)];
+
+<span class="kw">let </span><span class="kw-2">mut </span>builder = SentinelClientBuilder::new(nodes, String::from(<span class="string">"master"</span>), redis::sentinel::SentinelServerType::Master).unwrap();
+
+builder = builder.set_client_to_sentinel_username(String::from(<span class="string">"username1"</span>));
+builder = builder.set_client_to_sentinel_password(String::from(<span class="string">"password1"</span>));
+builder = builder.set_client_to_sentinel_tls_mode(redis::TlsMode::Insecure);
+
+builder = builder.set_client_to_redis_username(String::from(<span class="string">"username2"</span>));
+builder = builder.set_client_to_redis_password(String::from(<span class="string">"password2"</span>));
+builder = builder.set_client_to_redis_tls_mode(redis::TlsMode::Secure);
+
+
+<span class="kw">let </span>client = builder.build().unwrap();</code></pre></div></div></details><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><dl class="item-table"><dt><a class="struct" href="struct.LockedSentinelClient.html" title="struct redis::sentinel::LockedSentinelClient">Locked<wbr>Sentinel<wbr>Client</a><wbr><span class="stab portability" title="Available on crate feature `r2d2` only"><code>r2d2</code></span></dt><dd>LockedSentinelClient is a wrapper around SentinelClient usable in r2d2.</dd><dt><a class="struct" href="struct.Sentinel.html" title="struct redis::sentinel::Sentinel">Sentinel</a></dt><dd>The Sentinel type, serves as a special purpose client which builds other clients on
+demand.</dd><dt><a class="struct" href="struct.SentinelClient.html" title="struct redis::sentinel::SentinelClient">Sentinel<wbr>Client</a></dt><dd>A utility wrapping <code>Sentinel</code> with an interface similar to <a href="../struct.Client.html" title="struct redis::Client">Client</a>.</dd><dt><a class="struct" href="struct.SentinelClientBuilder.html" title="struct redis::sentinel::SentinelClientBuilder">Sentinel<wbr>Client<wbr>Builder</a></dt><dd>Used to configure and build a <a href="struct.SentinelClient.html" title="struct redis::sentinel::SentinelClient"><code>SentinelClient</code></a>.
+There are two connections that can be configured independently</dd><dt><a class="struct" href="struct.SentinelNodeConnectionInfo.html" title="struct redis::sentinel::SentinelNodeConnectionInfo">Sentinel<wbr>Node<wbr>Connection<wbr>Info</a></dt><dd>Holds the connection information that a sentinel should use when connecting to the
+servers (masters and replicas) belonging to it.</dd></dl><h2 id="enums" class="section-header">Enums<a href="#enums" class="anchor">§</a></h2><dl class="item-table"><dt><a class="enum" href="enum.SentinelServerType.html" title="enum redis::sentinel::SentinelServerType">Sentinel<wbr>Server<wbr>Type</a></dt><dd>Enum defining the server types from a sentinel’s point of view.</dd></dl></section></div></main></body></html>

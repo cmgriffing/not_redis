@@ -1,0 +1,75 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="This module provides async functionality for connecting to Redis / Valkey Clusters."><title>redis::cluster_async - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-b7b9f40b.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="redis" data-themes="" data-resource-suffix="" data-rustdoc-version="1.95.0-nightly (18d13b533 2026-02-09)" data-channel="nightly" data-search-js="search-fb33671b.js" data-stringdex-js="stringdex-b897f86f.js" data-settings-js="settings-170eb4bf.js" ><script src="../../static.files/storage-f9617a14.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../static.files/main-12f88f4f.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-f7c3ffd8.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc mod"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Module cluster_async</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../redis/index.html">redis</a><span class="version">1.0.3</span></h2></div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module cluster_<wbr>async</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#example" title="Example">Example</a></li><li><a href="#pipelining" title="Pipelining">Pipelining</a></li><li><a href="#pubsub" title="Pubsub">Pubsub</a></li><li><a href="#sending-request-to-specific-node" title="Sending request to specific node">Sending request to specific node</a></li></ul><h3><a href="#structs">Module Items</a></h3><ul class="block"><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#traits" title="Traits">Traits</a></li></ul></section><div id="rustdoc-modnav"><h2 class="in-crate"><a href="../index.html">In crate redis</a></h2></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><div class="rustdoc-breadcrumbs"><a href="../index.html">redis</a></div><h1>Module <span>cluster_<wbr>async</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../src/redis/cluster_handling/async_connection/mod.rs.html#1-1536">Source</a> </span></div><span class="item-info"><div class="stab portability">Available on <strong>crate features <code>cluster</code> and <code>aio</code></strong> only.</div></span><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>This module provides async functionality for connecting to Redis / Valkey Clusters.</p>
+<p>The cluster connection is meant to abstract the fact that a cluster is composed of multiple nodes,
+and to provide an API which is as close as possible to that of a single node connection. In order to do that,
+the cluster connection maintains connections to each node in the Redis/ Valkey cluster, and can route
+requests automatically to the relevant nodes. In cases that the cluster connection receives indications
+that the cluster topology has changed, it will query nodes in order to find the current cluster topology.
+If it disconnects from some nodes, it will automatically reconnect to those nodes.</p>
+<p>By default, <a href="struct.ClusterConnection.html" title="struct redis::cluster_async::ClusterConnection"><code>ClusterConnection</code></a> makes use of <a href="../aio/struct.MultiplexedConnection.html" title="struct redis::aio::MultiplexedConnection"><code>MultiplexedConnection</code></a> and maintains a pool
+of connections to each node in the cluster.</p>
+<h2 id="example"><a class="doc-anchor" href="#example">§</a>Example</h2>
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>redis::cluster::ClusterClient;
+<span class="kw">use </span>redis::AsyncTypedCommands;
+
+<span class="kw">async fn </span>fetch_an_integer() -&gt; String {
+    <span class="kw">let </span>nodes = <span class="macro">vec!</span>[<span class="string">"redis://127.0.0.1/"</span>];
+    <span class="kw">let </span>client = ClusterClient::new(nodes).unwrap();
+    <span class="kw">let </span><span class="kw-2">mut </span>connection = client.get_async_connection().<span class="kw">await</span>.unwrap();
+    connection.set(<span class="string">"test"</span>, <span class="string">"test_data"</span>).<span class="kw">await</span>.unwrap();
+    <span class="kw">let </span>rv = connection.get(<span class="string">"test"</span>).<span class="kw">await</span>.unwrap().unwrap();
+    <span class="kw">return </span>rv;
+}</code></pre></div><h2 id="pipelining"><a class="doc-anchor" href="#pipelining">§</a>Pipelining</h2>
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>redis::cluster::ClusterClient;
+<span class="kw">use </span>redis::{Value, AsyncCommands};
+
+<span class="kw">async fn </span>fetch_an_integer() -&gt; redis::RedisResult&lt;()&gt; {
+    <span class="kw">let </span>nodes = <span class="macro">vec!</span>[<span class="string">"redis://127.0.0.1/"</span>];
+    <span class="kw">let </span>client = ClusterClient::new(nodes).unwrap();
+    <span class="kw">let </span><span class="kw-2">mut </span>connection = client.get_async_connection().<span class="kw">await</span>.unwrap();
+    <span class="kw">let </span>key = <span class="string">"test"</span>;
+
+    redis::pipe()
+        .rpush(key, <span class="string">"123"</span>).ignore()
+        .ltrim(key, -<span class="number">10</span>, -<span class="number">1</span>).ignore()
+        .expire(key, <span class="number">60</span>).ignore()
+        .exec_async(<span class="kw-2">&amp;mut </span>connection).<span class="kw">await
+</span>}</code></pre></div><h2 id="pubsub"><a class="doc-anchor" href="#pubsub">§</a>Pubsub</h2>
+<p>Pubsub, and generally receiving push messages from the cluster nodes, is now supported
+when defining a connection with <a href="../enum.ProtocolVersion.html#variant.RESP3" title="variant redis::ProtocolVersion::RESP3">crate::ProtocolVersion::RESP3</a> and some
+<a href="../aio/trait.AsyncPushSender.html" title="trait redis::aio::AsyncPushSender">crate::aio::AsyncPushSender</a> to receive the messages on.</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>redis::cluster::ClusterClientBuilder;
+<span class="kw">use </span>redis::{Value, AsyncCommands};
+
+<span class="kw">async fn </span>fetch_an_integer() -&gt; redis::RedisResult&lt;()&gt; {
+    <span class="kw">let </span>nodes = <span class="macro">vec!</span>[<span class="string">"redis://127.0.0.1/?protocol=3"</span>];
+    <span class="kw">let </span>(tx, <span class="kw-2">mut </span>rx) = tokio::sync::mpsc::unbounded_channel();
+    <span class="kw">let </span>client = ClusterClientBuilder::new(nodes)
+        .use_protocol(redis::ProtocolVersion::RESP3)
+        .push_sender(tx).build()<span class="question-mark">?</span>;
+    <span class="kw">let </span><span class="kw-2">mut </span>connection = client.get_async_connection().<span class="kw">await</span><span class="question-mark">?</span>;
+    connection.subscribe(<span class="string">"channel"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+    <span class="kw">while let </span><span class="prelude-val">Some</span>(msg) = rx.recv().<span class="kw">await </span>{
+        <span class="macro">println!</span>(<span class="string">"Got: {:?}"</span>, msg);
+    }
+    <span class="prelude-val">Ok</span>(())
+}</code></pre></div><h2 id="sending-request-to-specific-node"><a class="doc-anchor" href="#sending-request-to-specific-node">§</a>Sending request to specific node</h2>
+<p>In some cases you’d want to send a request to a specific node in the cluster, instead of
+letting the cluster connection decide by itself to which node it should send the request.
+This can happen, for example, if you want to send SCAN commands to each node in the cluster.</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>redis::cluster::ClusterClient;
+<span class="kw">use </span>redis::{Value, AsyncCommands};
+<span class="kw">use </span>redis::cluster_routing::{ RoutingInfo, SingleNodeRoutingInfo };
+
+<span class="kw">async fn </span>fetch_an_integer() -&gt; redis::RedisResult&lt;Value&gt; {
+    <span class="kw">let </span>nodes = <span class="macro">vec!</span>[<span class="string">"redis://127.0.0.1/"</span>];
+    <span class="kw">let </span>client = ClusterClient::new(nodes)<span class="question-mark">?</span>;
+    <span class="kw">let </span><span class="kw-2">mut </span>connection = client.get_async_connection().<span class="kw">await</span><span class="question-mark">?</span>;
+    <span class="kw">let </span>routing_info = RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress{
+        host: <span class="string">"redis://127.0.0.1"</span>.to_string(),
+        port: <span class="number">6378
+    </span>});
+    connection.route_command(redis::cmd(<span class="string">"PING"</span>), routing_info).<span class="kw">await
+</span>}</code></pre></div></div></details><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><dl class="item-table"><dt><a class="struct" href="struct.ClusterConnection.html" title="struct redis::cluster_async::ClusterConnection">Cluster<wbr>Connection</a></dt><dd>This represents an async Redis Cluster connection.</dd></dl><h2 id="traits" class="section-header">Traits<a href="#traits" class="anchor">§</a></h2><dl class="item-table"><dt><a class="trait" href="trait.Connect.html" title="trait redis::cluster_async::Connect">Connect</a></dt><dd>Implements the process of connecting to a Redis server
+and obtaining a connection handle.</dd></dl></section></div></main></body></html>

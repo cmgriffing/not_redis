@@ -1,0 +1,52 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="This module extends the library to support Redis Cluster."><title>redis::cluster - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-b7b9f40b.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="redis" data-themes="" data-resource-suffix="" data-rustdoc-version="1.95.0-nightly (18d13b533 2026-02-09)" data-channel="nightly" data-search-js="search-fb33671b.js" data-stringdex-js="stringdex-b897f86f.js" data-settings-js="settings-170eb4bf.js" ><script src="../../static.files/storage-f9617a14.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../static.files/main-12f88f4f.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-f7c3ffd8.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc mod"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Module cluster</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../redis/index.html">redis</a><span class="version">1.0.3</span></h2></div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module cluster</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#example" title="Example">Example</a></li><li><a href="#pipelining" title="Pipelining">Pipelining</a></li><li><a href="#sending-request-to-specific-node" title="Sending request to specific node">Sending request to specific node</a></li></ul><h3><a href="#reexports">Module Items</a></h3><ul class="block"><li><a href="#reexports" title="Re-exports">Re-exports</a></li><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#traits" title="Traits">Traits</a></li><li><a href="#functions" title="Functions">Functions</a></li></ul></section><div id="rustdoc-modnav"><h2 class="in-crate"><a href="../index.html">In crate redis</a></h2></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><div class="rustdoc-breadcrumbs"><a href="../index.html">redis</a></div><h1>Module <span>cluster</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../src/redis/cluster_handling/sync_connection/mod.rs.html#1-1182">Source</a> </span></div><span class="item-info"><div class="stab portability">Available on <strong>crate feature <code>cluster</code></strong> only.</div></span><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>This module extends the library to support Redis Cluster.</p>
+<p>The cluster connection is meant to abstract the fact that a cluster is composed of multiple nodes,
+and to provide an API which is as close as possible to that of a single node connection. In order to do that,
+the cluster connection maintains connections to each node in the Redis/ Valkey cluster, and can route
+requests automatically to the relevant nodes. In cases that the cluster connection receives indications
+that the cluster topology has changed, it will query nodes in order to find the current cluster topology.
+If it disconnects from some nodes, it will automatically reconnect to those nodes.</p>
+<p>Note that pubsub &amp; push sending functionality is not currently provided by this module.</p>
+<h2 id="example"><a class="doc-anchor" href="#example">§</a>Example</h2>
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>redis::TypedCommands;
+<span class="kw">use </span>redis::cluster::ClusterClient;
+
+<span class="kw">let </span>nodes = <span class="macro">vec!</span>[<span class="string">"redis://127.0.0.1:6379/"</span>, <span class="string">"redis://127.0.0.1:6378/"</span>, <span class="string">"redis://127.0.0.1:6377/"</span>];
+<span class="kw">let </span>client = ClusterClient::new(nodes).unwrap();
+<span class="kw">let </span><span class="kw-2">mut </span>connection = client.get_connection().unwrap();
+
+connection.set(<span class="string">"test"</span>, <span class="string">"test_data"</span>).unwrap();
+<span class="kw">let </span>rv = connection.get(<span class="string">"test"</span>).unwrap().unwrap();
+
+<span class="macro">assert_eq!</span>(rv.as_str(), <span class="string">"test_data"</span>);</code></pre></div><h2 id="pipelining"><a class="doc-anchor" href="#pipelining">§</a>Pipelining</h2>
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>redis::TypedCommands;
+<span class="kw">use </span>redis::cluster::{cluster_pipe, ClusterClient};
+
+<span class="kw">let </span>nodes = <span class="macro">vec!</span>[<span class="string">"redis://127.0.0.1:6379/"</span>, <span class="string">"redis://127.0.0.1:6378/"</span>, <span class="string">"redis://127.0.0.1:6377/"</span>];
+<span class="kw">let </span>client = ClusterClient::new(nodes).unwrap();
+<span class="kw">let </span><span class="kw-2">mut </span>connection = client.get_connection().unwrap();
+
+<span class="kw">let </span>key = <span class="string">"test"</span>;
+
+cluster_pipe()
+    .rpush(key, <span class="string">"123"</span>).ignore()
+    .ltrim(key, -<span class="number">10</span>, -<span class="number">1</span>).ignore()
+    .expire(key, <span class="number">60</span>).ignore()
+    .exec(<span class="kw-2">&amp;mut </span>connection).unwrap();</code></pre></div><h2 id="sending-request-to-specific-node"><a class="doc-anchor" href="#sending-request-to-specific-node">§</a>Sending request to specific node</h2>
+<p>In some cases you’d want to send a request to a specific node in the cluster, instead of
+letting the cluster connection decide by itself to which node it should send the request.
+This can happen, for example, if you want to send SCAN commands to each node in the cluster.</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>redis::Commands;
+<span class="kw">use </span>redis::cluster::ClusterClient;
+<span class="kw">use </span>redis::cluster_routing::{ RoutingInfo, SingleNodeRoutingInfo };
+
+<span class="kw">let </span>nodes = <span class="macro">vec!</span>[<span class="string">"redis://127.0.0.1:6379/"</span>, <span class="string">"redis://127.0.0.1:6378/"</span>, <span class="string">"redis://127.0.0.1:6377/"</span>];
+<span class="kw">let </span>client = ClusterClient::new(nodes).unwrap();
+<span class="kw">let </span><span class="kw-2">mut </span>connection = client.get_connection().unwrap();
+
+<span class="kw">let </span>routing_info = RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress{
+    host: <span class="string">"redis://127.0.0.1"</span>.to_string(),
+    port: <span class="number">6378
+</span>});
+<span class="kw">let _</span>: redis::Value = connection.route_command(<span class="kw-2">&amp;</span>redis::cmd(<span class="string">"PING"</span>), routing_info).unwrap();</code></pre></div></div></details><h2 id="reexports" class="section-header">Re-exports<a href="#reexports" class="anchor">§</a></h2><dl class="item-table reexports"><dt id="reexport.TlsMode"><code>pub use crate::<a class="enum" href="../enum.TlsMode.html" title="enum redis::TlsMode">TlsMode</a>;</code></dt></dl><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><dl class="item-table"><dt><a class="struct" href="struct.ClusterClient.html" title="struct redis::cluster::ClusterClient">Cluster<wbr>Client</a></dt><dd>A Redis Cluster client, used to create connections.</dd><dt><a class="struct" href="struct.ClusterClientBuilder.html" title="struct redis::cluster::ClusterClientBuilder">Cluster<wbr>Client<wbr>Builder</a></dt><dd>Used to configure and build a <a href="struct.ClusterClient.html" title="struct redis::cluster::ClusterClient"><code>ClusterClient</code></a>.</dd><dt><a class="struct" href="struct.ClusterConfig.html" title="struct redis::cluster::ClusterConfig">Cluster<wbr>Config</a></dt><dd>Options for creation of connection</dd><dt><a class="struct" href="struct.ClusterConnection.html" title="struct redis::cluster::ClusterConnection">Cluster<wbr>Connection</a></dt><dd>This represents a Redis Cluster connection.</dd><dt><a class="struct" href="struct.ClusterPipeline.html" title="struct redis::cluster::ClusterPipeline">Cluster<wbr>Pipeline</a></dt><dd>Represents a Redis Cluster command pipeline.</dd></dl><h2 id="traits" class="section-header">Traits<a href="#traits" class="anchor">§</a></h2><dl class="item-table"><dt><a class="trait" href="trait.Connect.html" title="trait redis::cluster::Connect">Connect</a></dt><dd>Implements the process of connecting to a Redis server
+and obtaining and configuring a connection handle.</dd></dl><h2 id="functions" class="section-header">Functions<a href="#functions" class="anchor">§</a></h2><dl class="item-table"><dt><a class="fn" href="fn.cluster_pipe.html" title="fn redis::cluster::cluster_pipe">cluster_<wbr>pipe</a></dt><dd>Shortcut for creating a new cluster pipeline.</dd></dl></section></div></main></body></html>
