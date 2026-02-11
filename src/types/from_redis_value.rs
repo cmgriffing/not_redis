@@ -1,6 +1,23 @@
+//! Trait for converting Redis values into Rust types.
+
 use super::Value;
 use crate::error::{RedisError, RedisResult};
 
+/// A trait for converting Redis values into Rust types.
+///
+/// This trait is implemented for common Rust types to allow them
+/// to be returned from Redis commands.
+///
+/// # Implementors
+///
+/// - `String`: Converts from Redis strings and integers
+/// - `Vec<u8>`: Converts from Redis strings (raw bytes)
+/// - `i64`, `u64`, `isize`, `usize`: Converts from Redis integers
+/// - `bool`: Converts from Redis booleans and integers
+/// - `()`: Converts from Redis null/okay
+/// - `Option<T>`: Converts null to None, otherwise Some(T)
+/// - `Vec<T>`: Converts from Redis arrays
+/// - `Value`: Returns the value as-is
 pub trait FromRedisValue: Sized {
     fn from_redis_value(v: Value) -> RedisResult<Self>;
 }

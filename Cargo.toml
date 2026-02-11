@@ -3,6 +3,12 @@ name = "not_redis"
 version = "0.1.0"
 edition = "2024"
 authors = ["not_redis contributors"]
+description = "A Redis-compatible in-memory data structure library for Rust"
+license = "MIT"
+repository = "https://github.com/not_redis/not_redis"
+keywords = ["redis", "cache", "in-memory", "database", "storage"]
+categories = ["caching", "database-implementations", "data-structures"]
+readme = "README.md"
 
 [dependencies]
 tokio = { version = "1.0", features = ["full"] }

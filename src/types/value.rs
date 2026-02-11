@@ -1,3 +1,9 @@
+//! Redis value types.
+
+/// Represents a value stored in or returned from Redis.
+///
+/// This enum mirrors the RESP (REdis Serialization Protocol) types
+/// supported by Redis.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Null,

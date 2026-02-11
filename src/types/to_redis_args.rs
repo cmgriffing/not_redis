@@ -1,5 +1,21 @@
+//! Trait for converting Rust values into Redis command arguments.
+
 use super::Value;
 
+/// A trait for converting values into Redis command arguments.
+///
+/// This trait is implemented for common Rust types to allow them
+/// to be used as keys or values in Redis commands.
+///
+/// # Implementors
+///
+/// - `String`, `&str`: Converts to Redis string
+/// - `Vec<u8>`, `&[u8]`: Converts to Redis string (raw bytes)
+/// - `i64`, `u64`, `isize`, `usize`: Converts to Redis integer
+/// - `bool`: Converts to Redis boolean
+/// - `Option<T>`: Converts None to null, Some to the inner value
+/// - `Vec<T>`: Converts each element
+/// - Tuples up to 8 elements: Flattens all elements
 pub trait ToRedisArgs {
     fn to_redis_args(&self) -> Vec<Value>;
 }

@@ -1,8 +1,14 @@
+//! Key expiration management.
+
 use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::time;
 
+/// Manages key expiration for the storage engine.
+/// 
+/// Uses a time-ordered map to efficiently find expired keys
+/// and a background task to periodically sweep and remove them.
 pub struct ExpirationManager {
     expirations: Arc<Mutex<BTreeMap<Instant, HashSet<String>>>>,
     sweep_interval: Duration,

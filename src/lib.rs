@@ -1,10 +1,65 @@
+//! # not_redis
+//!
+//! A Redis-compatible in-memory data structure library for Rust.
+//!
+//! not_redis provides Redis-like APIs without the networking overhead, external
+//! service dependencies, or operational complexity of running a Redis server.
+//!
+//! ## Features
+//!
+//! - **Zero-config**: Embeddable Redis-compatible storage
+//! - **Thread-safe**: Concurrent access via Tokio and DashMap
+//! - **RESP-compatible**: Data types and command semantics compatible with Redis
+//! - **In-process**: No network overhead - runs in your application
+//!
+//! ## Supported Commands
+//!
+//! - **Strings**: GET, SET, DEL, EXISTS, EXPIRE, TTL, PERSIST
+//! - **Hashes**: HSET, HGET, HGETALL, HDEL
+//! - **Lists**: LPUSH, RPUSH, LLEN
+//! - **Sets**: SADD, SMEMBERS
+//! - **Utilities**: PING, ECHO, DBSIZE, FLUSHDB
+//!
+//! ## Example
+//!
+//! ```rust,no_run
+//! use not_redis::Client;
+//!
+//! #[tokio::main]
+//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     let mut client = Client::new();
+//!     client.start().await;
+//!
+//!     // String operations
+//!     client.set("user:1:name", "Alice").await?;
+//!     let name: String = client.get("user:1:name").await?;
+//!
+//!     // Hash operations
+//!     client.hset("user:1", "email", "alice@example.com").await?;
+//!     let email: String = client.hget("user:1", "email").await?;
+//!
+//!     // Expiration
+//!     client.expire("user:1", 60).await?;
+//!     let ttl: i64 = client.ttl("user:1").await?;
+//!
+//!     Ok(())
+//! }
+//! ```
+
+#![warn(missing_docs)]
+
 use dashmap::DashMap;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use thiserror::Error;
 
+/// Error type for Redis operations.
+///
+/// This enum represents the various errors that can occur when
+/// interacting with the Redis-like store.
 #[derive(Error, Debug)]
+#[allow(missing_docs)]
 pub enum RedisError {
     #[error("Cannot parse value")]
     ParseError,
@@ -18,9 +73,15 @@ pub enum RedisError {
     Unknown(String),
 }
 
+/// A specialized `Result` type for Redis operations.
 pub type RedisResult<T> = Result<T, RedisError>;
 
+/// Represents a value stored in or returned from Redis.
+///
+/// This enum mirrors the RESP (REdis Serialization Protocol) types
+/// supported by Redis.
 #[derive(Debug, Clone, PartialEq)]
+#[allow(missing_docs)]
 pub enum Value {
     Null,
     Int(i64),
@@ -68,7 +129,12 @@ impl From<Vec<Value>> for Value {
     }
 }
 
+/// Internal data types stored in the engine.
+///
+/// These represent the actual data structures that can be stored,
+/// as opposed to the RESP protocol [`Value`] types.
 #[derive(Debug, Clone)]
+#[allow(missing_docs)]
 pub enum RedisData {
     String(Vec<u8>),
     List(VecDeque<Vec<u8>>),
@@ -77,12 +143,15 @@ pub enum RedisData {
     ZSet(BTreeMap<Vec<u8>, f64>),
 }
 
+/// A value stored in the storage engine with optional expiration.
 #[derive(Debug, Clone)]
+#[allow(missing_docs)]
 pub struct StoredValue {
     pub data: RedisData,
     pub expire_at: Option<Instant>,
 }
 
+#[allow(missing_docs)]
 impl StoredValue {
     pub fn is_expired(&self) -> bool {
         self.expire_at.is_some_and(|at| Instant::now() >= at)
@@ -121,12 +190,17 @@ impl ExpirationManager {
     }
 }
 
+/// The core storage engine for the Redis-like store.
+///
+/// Uses a concurrent hash map ([`DashMap`]) for thread-safe access
+/// and supports key expiration with a background sweeper task.
 #[derive(Clone)]
 pub struct StorageEngine {
     data: Arc<DashMap<String, StoredValue>>,
     expiration: ExpirationManager,
 }
 
+#[allow(missing_docs)]
 impl StorageEngine {
     pub fn new() -> Self {
         Self {
@@ -242,6 +316,19 @@ impl Default for StorageEngine {
     }
 }
 
+/// A trait for converting values into Redis command arguments.
+///
+/// This trait is implemented for common Rust types to allow them
+/// to be used as keys or values in Redis commands.
+///
+/// # Implementors
+///
+/// - `String`, `&str`: Converts to Redis string
+/// - `Vec<u8>`: Converts to Redis string (raw bytes)
+/// - `i64`, `u64`, `isize`, `usize`: Converts to Redis integer
+/// - `bool`: Converts to Redis boolean
+/// - `Option<T>`: Converts `None` to null, `Some` to the inner value
+#[allow(missing_docs)]
 pub trait ToRedisArgs {
     fn to_redis_args(&self) -> Vec<Value>;
 }
@@ -303,6 +390,21 @@ impl<T: ToRedisArgs> ToRedisArgs for Option<T> {
     }
 }
 
+/// A trait for converting Redis values into Rust types.
+///
+/// This trait is implemented for common Rust types to allow them
+/// to be returned from Redis commands.
+///
+/// # Implementors
+///
+/// - `String`: Converts from Redis strings and integers
+/// - `Vec<u8>`: Converts from Redis strings (raw bytes)
+/// - `i64`: Converts from Redis integers and strings
+/// - `bool`: Converts from Redis booleans and integers
+/// - `Option<T>`: Converts null to `None`, otherwise `Some(T)`
+/// - `Vec<T>`: Converts from Redis arrays
+/// - `Value`: Returns the value as-is
+#[allow(missing_docs)]
 pub trait FromRedisValue: Sized {
     fn from_redis_value(v: Value) -> RedisResult<Self>;
 }
@@ -372,10 +474,32 @@ impl<T: FromRedisValue> FromRedisValue for Vec<T> {
     }
 }
 
+/// A Redis client for executing commands against an in-memory store.
+///
+/// The client provides methods for all common Redis operations including
+/// strings, lists, sets, hashes, and sorted sets.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use not_redis::Client;
+///
+/// #[tokio::main]
+/// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+///     let mut client = Client::new();
+///     client.start().await;
+///     
+///     client.set("key", "value").await?;
+///     let value: String = client.get("key").await?;
+///     
+///     Ok(())
+/// }
+/// ```
 pub struct Client {
     storage: StorageEngine,
 }
 
+#[allow(missing_docs)]
 impl Client {
     pub fn new() -> Self {
         Self {

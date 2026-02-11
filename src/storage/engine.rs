@@ -1,3 +1,5 @@
+//! The core storage engine implementation.
+
 use std::collections::{HashMap, HashSet, VecDeque, BTreeMap};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -6,6 +8,10 @@ use dashmap::DashMap;
 use super::types::{RedisData, StoredValue};
 use super::expire::ExpirationManager;
 
+/// The core storage engine for the Redis-like store.
+/// 
+/// Uses a concurrent hash map ([`DashMap`]) for thread-safe access
+/// and supports key expiration with a background sweeper task.
 #[derive(Clone)]
 pub struct StorageEngine {
     data: Arc<DashMap<String, StoredValue>>,

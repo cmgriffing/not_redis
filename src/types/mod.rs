@@ -1,3 +1,5 @@
+//! Type conversion traits and value types for Redis operations.
+
 pub mod from_redis_value;
 pub mod to_redis_args;
 pub mod value;

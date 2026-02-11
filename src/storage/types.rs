@@ -1,6 +1,12 @@
+//! Internal data types for the storage engine.
+
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::time::Instant;
 
+/// Internal data types stored in the engine.
+///
+/// These represent the actual data structures that can be stored,
+/// as opposed to the RESP protocol [`Value`](crate::Value) types.
 #[derive(Debug, Clone)]
 pub enum RedisData {
     String(Vec<u8>),
@@ -10,6 +16,7 @@ pub enum RedisData {
     ZSet(BTreeMap<Vec<u8>, f64>),
 }
 
+/// A value stored in the storage engine with optional expiration.
 #[derive(Debug, Clone)]
 pub struct StoredValue {
     pub data: RedisData,
