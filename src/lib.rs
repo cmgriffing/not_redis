@@ -85,7 +85,7 @@ pub struct StoredValue {
 
 impl StoredValue {
     pub fn is_expired(&self) -> bool {
-        self.expire_at.map_or(false, |at| Instant::now() >= at)
+        self.expire_at.is_some_and(|at| Instant::now() >= at)
     }
 }
 
@@ -161,10 +161,9 @@ impl StorageEngine {
     }
 
     pub fn set(&self, key: &str, value: RedisData, expire_at: Option<Instant>) {
-        if let Some(old) = self.data.get(key) {
-            if old.expire_at.is_some() {
-                self.expiration.cancel(key);
-            }
+        if let Some(old) = self.data.get(key)
+            && old.expire_at.is_some() {
+            self.expiration.cancel(key);
         }
         let stored = StoredValue {
             data: value,
@@ -191,6 +190,10 @@ impl StorageEngine {
 
     pub fn len(&self) -> usize {
         self.data.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.data.is_empty()
     }
 
     pub fn flush(&self) {

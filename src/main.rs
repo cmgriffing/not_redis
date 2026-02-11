@@ -1,5 +1,4 @@
 use not_redis::Client;
-use tokio;
 
 #[tokio::main]
 async fn main() {
