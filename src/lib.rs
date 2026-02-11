@@ -204,6 +204,15 @@ impl StorageEngine {
             e.expire_at.map(|at| at.saturating_duration_since(Instant::now()))
         })
     }
+
+    pub fn ttl_query(&self, key: &str) -> i64 {
+        self.data.get(key).map_or(-2i64, |e| {
+            match e.expire_at {
+                Some(at) => at.saturating_duration_since(Instant::now()).as_secs() as i64,
+                None => -1i64,
+            }
+        })
+    }
 }
 
 impl Default for StorageEngine {
@@ -261,6 +270,7 @@ impl FromRedisValue for String {
         match v {
             Value::String(s) => String::from_utf8(s).map_err(|_| RedisError::ParseError),
             Value::Int(n) => Ok(n.to_string()),
+            Value::Null => Ok(String::new()),
             _ => Err(RedisError::ParseError),
         }
     }
@@ -288,6 +298,10 @@ impl FromRedisValue for bool {
         match v {
             Value::Bool(b) => Ok(b),
             Value::Int(n) => Ok(n != 0),
+            Value::String(s) => {
+                let s_str = String::from_utf8(s).map_err(|_| RedisError::ParseError)?;
+                Ok(s_str == "1" || s_str.eq_ignore_ascii_case("true"))
+            }
             Value::Null => Ok(false),
             _ => Err(RedisError::ParseError),
         }
@@ -356,7 +370,7 @@ impl Client {
 
     pub async fn ttl<K>(&mut self, key: K) -> RedisResult<i64>
     where K: ToRedisArgs {
-        Ok(self.storage.ttl(&Self::key_to_string(&key)).map_or(-2i64, |d| d.as_secs() as i64))
+        Ok(self.storage.ttl_query(&Self::key_to_string(&key)))
     }
 
     pub async fn hset<K, F, V>(&mut self, key: K, field: F, value: V) -> RedisResult<i64>
@@ -531,13 +545,23 @@ impl Client {
 
     pub async fn flushdb(&mut self) -> RedisResult<String> { self.storage.flush(); Ok("OK".to_string()) }
 
+    pub async fn persist(&mut self, key: &str) -> bool { self.storage.persist(key) }
+
     fn key_to_string<K: ToRedisArgs>(key: &K) -> String {
         String::from_utf8_lossy(&Self::value_to_vec(key)).to_string()
     }
 
     fn value_to_vec<V: ToRedisArgs>(v: &V) -> Vec<u8> {
         let args = v.to_redis_args();
-        if let Some(Value::String(s)) = args.first() { s.clone() } else { Vec::new() }
+        for arg in args {
+            match arg {
+                Value::String(s) => return s,
+                Value::Int(n) => return n.to_string().into_bytes(),
+                Value::Bool(b) => return (if b { "1" } else { "0" }).to_string().into_bytes(),
+                _ => {}
+            }
+        }
+        Vec::new()
     }
 }
 
