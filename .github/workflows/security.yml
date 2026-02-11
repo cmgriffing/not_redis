@@ -2,11 +2,11 @@ name: Security Audit
 
 on:
   schedule:
-    - cron: 'weekly'
+    - cron: "0 0 * * 0"
   push:
-    paths: ['Cargo.lock', 'Cargo.toml']
+    paths: ["Cargo.lock", "Cargo.toml"]
   pull_request:
-    paths: ['Cargo.lock', 'Cargo.toml']
+    paths: ["Cargo.lock", "Cargo.toml"]
 
 jobs:
   audit:
