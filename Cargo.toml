@@ -2,5 +2,12 @@
 name = "not_redis"
 version = "0.1.0"
 edition = "2024"
+authors = ["not_redis contributors"]
 
 [dependencies]
+tokio = { version = "1.0", features = ["full"] }
+dashmap = "6.0"
+thiserror = "2.0"
+
+[dev-dependencies]
+tokio = { version = "1.0", features = ["test-util"] }
