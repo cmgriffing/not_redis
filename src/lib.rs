@@ -162,7 +162,8 @@ impl StorageEngine {
 
     pub fn set(&self, key: &str, value: RedisData, expire_at: Option<Instant>) {
         if let Some(old) = self.data.get(key)
-            && old.expire_at.is_some() {
+            && old.expire_at.is_some()
+        {
             self.expiration.cancel(key);
         }
         let stored = StoredValue {
