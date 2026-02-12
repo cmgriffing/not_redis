@@ -202,6 +202,10 @@ pub struct StorageEngine {
 
 #[allow(missing_docs)]
 impl StorageEngine {
+    /// Creates a new storage engine with the default sweep interval.
+    ///
+    /// The sweep interval determines how often expired keys are cleaned up
+    /// by the background task when started.
     pub fn new() -> Self {
         Self {
             data: Arc::new(DashMap::new()),
@@ -209,6 +213,10 @@ impl StorageEngine {
         }
     }
 
+    /// Starts the background task that periodically sweeps expired keys.
+    ///
+    /// This spawns a Tokio task that runs indefinitely, removing keys
+    /// that have passed their expiration time.
     pub async fn start_expiration_sweeper(&self) {
         let expiration = self.expiration.clone();
         let data = Arc::clone(&self.data);
@@ -234,6 +242,12 @@ impl StorageEngine {
         });
     }
 
+    /// Sets a key-value pair in the storage engine.
+    ///
+    /// # Arguments
+    /// * `key` - The key to store
+    /// * `value` - The data to store
+    /// * `expire_at` - Optional expiration time
     pub fn set(&self, key: &str, value: RedisData, expire_at: Option<Instant>) {
         if let Some(old) = self.data.get(key) {
             if old.expire_at.is_some() {
@@ -250,32 +264,55 @@ impl StorageEngine {
         }
     }
 
+    /// Gets a value from the storage engine by key.
+    ///
+    /// Returns the stored value if the key exists and has not expired.
     pub fn get(&self, key: &str) -> Option<StoredValue> {
         self.data.get(key).map(|v| v.clone())
     }
 
+    /// Removes a key from the storage engine.
+    ///
+    /// Returns `true` if the key was present, `false` otherwise.
+    /// Also removes any scheduled expiration for the key.
     pub fn remove(&self, key: &str) -> bool {
         self.expiration.cancel(key);
         self.data.remove(key).is_some()
     }
 
+    /// Checks if a key exists in the storage engine.
+    ///
+    /// Returns `true` if the key exists, `false` otherwise.
+    /// Note: This does not check if the key has expired.
     pub fn exists(&self, key: &str) -> bool {
         self.data.contains_key(key)
     }
 
+    /// Returns the number of keys in the storage engine.
     pub fn len(&self) -> usize {
         self.data.len()
     }
 
+    /// Returns `true` if the storage engine contains no keys.
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
     }
 
+    /// Clears all data from the storage engine.
+    ///
+    /// This removes all keys and their values, and cancels all scheduled expirations.
     pub fn flush(&self) {
         self.data.clear();
         self.expiration.clear();
     }
 
+    /// Sets an expiration time on an existing key.
+    ///
+    /// # Arguments
+    /// * `key` - The key to set expiration on
+    /// * `dur` - The duration until expiration
+    ///
+    /// Returns `true` if the key exists and expiration was set, `false` otherwise.
     pub fn set_expiry(&self, key: &str, dur: Duration) -> bool {
         if let Some(mut e) = self.data.get_mut(key) {
             let at = Instant::now() + dur;
@@ -286,6 +323,9 @@ impl StorageEngine {
         false
     }
 
+    /// Removes the expiration from a key, making it persistent.
+    ///
+    /// Returns `true` if the key existed and expiration was removed, `false` otherwise.
     pub fn persist(&self, key: &str) -> bool {
         if let Some(mut e) = self.data.get_mut(key) {
             e.expire_at = None;
@@ -295,6 +335,10 @@ impl StorageEngine {
         false
     }
 
+    /// Returns the time-to-live remaining for a key.
+    ///
+    /// Returns `Some(Duration)` if the key has an expiration,
+    /// or `None` if the key does not exist or has no expiration.
     pub fn ttl(&self, key: &str) -> Option<Duration> {
         self.data.get(key).and_then(|e| {
             e.expire_at
@@ -302,6 +346,12 @@ impl StorageEngine {
         })
     }
 
+    /// Returns the TTL of a key in seconds, in Redis-compatible format.
+    ///
+    /// Returns:
+    /// - `-1` if the key exists but has no expiration
+    /// - `-2` if the key does not exist
+    /// - A non-negative value representing seconds until expiration
     pub fn ttl_query(&self, key: &str) -> i64 {
         self.data.get(key).map_or(-2i64, |e| match e.expire_at {
             Some(at) => at.saturating_duration_since(Instant::now()).as_secs() as i64,
@@ -500,20 +550,33 @@ pub struct Client {
 }
 
 impl Client {
+    /// Creates a new Client with a fresh in-memory storage engine.
     pub fn new() -> Self {
         Self {
             storage: StorageEngine::new(),
         }
     }
 
+    /// Creates a new Client with an existing storage engine.
+    ///
+    /// This allows sharing a storage engine between multiple clients.
     pub fn from_storage(storage: StorageEngine) -> Self {
         Self { storage }
     }
 
+    /// Starts the client, initializing the background expiration sweeper.
+    ///
+    /// This must be called before using the client to ensure expired keys
+    /// are properly cleaned up.
     pub async fn start(&self) {
         self.storage.start_expiration_sweeper().await;
     }
 
+    /// Gets a value from the database.
+    ///
+    /// # Type Parameters
+    /// * `K` - The key type (must implement [`ToRedisArgs`])
+    /// * `RV` - The return value type (must implement [`FromRedisValue`])
     pub async fn get<K, RV>(&mut self, key: K) -> RedisResult<RV>
     where
         K: ToRedisArgs,
@@ -534,6 +597,11 @@ impl Client {
         }
     }
 
+    /// Sets a key-value pair in the database.
+    ///
+    /// # Type Parameters
+    /// * `K` - The key type
+    /// * `V` - The value type
     pub async fn set<K, V>(&mut self, key: K, value: V) -> RedisResult<()>
     where
         K: ToRedisArgs,
@@ -545,6 +613,9 @@ impl Client {
         Ok(())
     }
 
+    /// Deletes one or more keys from the database.
+    ///
+    /// Returns the number of keys that were deleted.
     pub async fn del<K>(&mut self, key: K) -> RedisResult<i64>
     where
         K: ToRedisArgs,
@@ -553,6 +624,9 @@ impl Client {
         Ok(if self.storage.remove(&key_str) { 1 } else { 0 })
     }
 
+    /// Checks if one or more keys exist in the database.
+    ///
+    /// Returns `true` if at least one key exists, `false` otherwise.
     pub async fn exists<K>(&mut self, key: K) -> RedisResult<bool>
     where
         K: ToRedisArgs,
@@ -560,6 +634,13 @@ impl Client {
         Ok(self.storage.exists(&Self::key_to_string(&key)))
     }
 
+    /// Sets an expiration time on a key.
+    ///
+    /// # Arguments
+    /// * `key` - The key to set expiration on
+    /// * `seconds` - The number of seconds until expiration
+    ///
+    /// Returns `true` if the expiration was set, `false` if the key doesn't exist.
     pub async fn expire<K>(&mut self, key: K, seconds: i64) -> RedisResult<bool>
     where
         K: ToRedisArgs,
@@ -570,6 +651,12 @@ impl Client {
         ))
     }
 
+    /// Gets the time-to-live of a key.
+    ///
+    /// Returns:
+    /// - `-1` if the key exists but has no expiration
+    /// - `-2` if the key does not exist
+    /// - A non-negative value representing seconds until expiration
     pub async fn ttl<K>(&mut self, key: K) -> RedisResult<i64>
     where
         K: ToRedisArgs,
@@ -577,6 +664,14 @@ impl Client {
         Ok(self.storage.ttl_query(&Self::key_to_string(&key)))
     }
 
+    /// Sets a field in a hash.
+    ///
+    /// # Type Parameters
+    /// * `K` - The hash key
+    /// * `F` - The field name
+    /// * `V` - The field value
+    ///
+    /// Returns `1` if the field is new, `0` if the field was updated.
     pub async fn hset<K, F, V>(&mut self, key: K, field: F, value: V) -> RedisResult<i64>
     where
         K: ToRedisArgs,
@@ -606,6 +701,12 @@ impl Client {
         Ok(if is_new { 1 } else { 0 })
     }
 
+    /// Gets a field value from a hash.
+    ///
+    /// # Type Parameters
+    /// * `K` - The hash key
+    /// * `F` - The field name
+    /// * `RV` - The return value type
     pub async fn hget<K, F, RV>(&mut self, key: K, field: F) -> RedisResult<RV>
     where
         K: ToRedisArgs,
@@ -634,6 +735,9 @@ impl Client {
         }
     }
 
+    /// Gets all fields and values from a hash.
+    ///
+    /// Returns an array of alternating field names and values.
     pub async fn hgetall<K, RV>(&mut self, key: K) -> RedisResult<RV>
     where
         K: ToRedisArgs,
@@ -661,6 +765,9 @@ impl Client {
         }
     }
 
+    /// Deletes one or more fields from a hash.
+    ///
+    /// Returns the number of fields that were deleted.
     pub async fn hdel<K, F>(&mut self, key: K, field: F) -> RedisResult<i64>
     where
         K: ToRedisArgs,
@@ -685,6 +792,9 @@ impl Client {
         }
     }
 
+    /// Pushes a value to the front (left) of a list.
+    ///
+    /// Returns the length of the list after the push.
     pub async fn lpush<K, V>(&mut self, key: K, value: V) -> RedisResult<i64>
     where
         K: ToRedisArgs,
@@ -711,6 +821,9 @@ impl Client {
         Ok(len)
     }
 
+    /// Pushes a value to the back (right) of a list.
+    ///
+    /// Returns the length of the list after the push.
     pub async fn rpush<K, V>(&mut self, key: K, value: V) -> RedisResult<i64>
     where
         K: ToRedisArgs,
@@ -737,6 +850,9 @@ impl Client {
         Ok(len)
     }
 
+    /// Returns the length of a list.
+    ///
+    /// Returns `0` if the key doesn't exist or is not a list.
     pub async fn llen<K>(&mut self, key: K) -> RedisResult<i64>
     where
         K: ToRedisArgs,
@@ -756,6 +872,9 @@ impl Client {
         }
     }
 
+    /// Adds one or more members to a set.
+    ///
+    /// Returns the number of members that were added to the set.
     pub async fn sadd<K, V>(&mut self, key: K, member: V) -> RedisResult<i64>
     where
         K: ToRedisArgs,
@@ -780,6 +899,7 @@ impl Client {
         }
     }
 
+    /// Returns all members of a set.
     pub async fn smembers<K, RV>(&mut self, key: K) -> RedisResult<RV>
     where
         K: ToRedisArgs,
@@ -803,10 +923,16 @@ impl Client {
         }
     }
 
+    /// Pings the server.
+    ///
+    /// Returns "PONG".
     pub async fn ping(&mut self) -> RedisResult<String> {
         Ok("PONG".to_string())
     }
 
+    /// Echoes the given message.
+    ///
+    /// Returns the message that was passed in.
     pub async fn echo<K>(&mut self, msg: K) -> RedisResult<String>
     where
         K: ToRedisArgs,
@@ -814,15 +940,22 @@ impl Client {
         Ok(String::from_utf8_lossy(&Self::value_to_vec(&msg)).to_string())
     }
 
+    /// Returns the number of keys in the database.
     pub async fn dbsize(&mut self) -> RedisResult<i64> {
         Ok(self.storage.len() as i64)
     }
 
+    /// Removes all keys from the current database.
+    ///
+    /// Returns "OK".
     pub async fn flushdb(&mut self) -> RedisResult<String> {
         self.storage.flush();
         Ok("OK".to_string())
     }
 
+    /// Removes the expiration from a key.
+    ///
+    /// Returns `true` if the key existed and expiration was removed, `false` otherwise.
     pub async fn persist(&mut self, key: &str) -> bool {
         self.storage.persist(key)
     }
