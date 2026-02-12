@@ -235,10 +235,10 @@ impl StorageEngine {
     }
 
     pub fn set(&self, key: &str, value: RedisData, expire_at: Option<Instant>) {
-        if let Some(old) = self.data.get(key)
-            && old.expire_at.is_some()
-        {
-            self.expiration.cancel(key);
+        if let Some(old) = self.data.get(key) {
+            if old.expire_at.is_some() {
+                self.expiration.cancel(key);
+            }
         }
         let stored = StoredValue {
             data: value,
@@ -499,12 +499,15 @@ pub struct Client {
     storage: StorageEngine,
 }
 
-#[allow(missing_docs)]
 impl Client {
     pub fn new() -> Self {
         Self {
             storage: StorageEngine::new(),
         }
+    }
+
+    pub fn from_storage(storage: StorageEngine) -> Self {
+        Self { storage }
     }
 
     pub async fn start(&self) {
