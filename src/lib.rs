@@ -129,6 +129,9 @@ impl From<Vec<Value>> for Value {
     }
 }
 
+/// Represents a single entry in a Redis stream.
+pub type StreamEntry = (Vec<u8>, Vec<(Vec<u8>, Vec<u8>)>);
+
 /// Internal data types stored in the engine.
 ///
 /// These represent the actual data structures that can be stored,
@@ -141,6 +144,7 @@ pub enum RedisData {
     Set(HashSet<Vec<u8>>),
     Hash(HashMap<Vec<u8>, Vec<u8>>),
     ZSet(BTreeMap<Vec<u8>, f64>),
+    Stream(Vec<StreamEntry>),
 }
 
 /// A value stored in the storage engine with optional expiration.
@@ -357,6 +361,158 @@ impl StorageEngine {
             Some(at) => at.saturating_duration_since(Instant::now()).as_secs() as i64,
             None => -1i64,
         })
+    }
+
+    /// Adds an entry to a stream.
+    ///
+    /// # Arguments
+    /// * `key` - The stream key
+    /// * `entry_id` - Optional custom entry ID. If None, auto-generates one
+    /// * `values` - Field-value pairs to add
+    ///
+    /// Returns the entry ID if successful, None if key exists but is not a stream.
+    pub fn xadd(&self, key: &str, entry_id: Option<&[u8]>, values: Vec<(Vec<u8>, Vec<u8>)>) -> Option<Vec<u8>> {
+        let new_id = match entry_id {
+            Some(id) => id.to_vec(),
+            None => self.generate_stream_id(),
+        };
+
+        let entry = (new_id.clone(), values);
+
+        if let Some(mut stored) = self.data.get_mut(key) {
+            match &mut stored.data {
+                RedisData::Stream(entries) => {
+                    entries.push(entry);
+                    Some(new_id)
+                }
+                _ => None,
+            }
+        } else {
+            let entries = vec![entry];
+            self.set(key, RedisData::Stream(entries), None);
+            Some(new_id)
+        }
+    }
+
+    /// Returns the number of entries in a stream.
+    ///
+    /// Returns the length if the key exists and is a stream, None otherwise.
+    pub fn xlen(&self, key: &str) -> Option<usize> {
+        self.data.get(key).map(|stored| {
+            match &stored.data {
+                RedisData::Stream(entries) => entries.len(),
+                _ => 0,
+            }
+        })
+    }
+
+    /// Trims a stream to a maximum number of entries.
+    ///
+    /// # Arguments
+    /// * `key` - The stream key
+    /// * `maxlen` - Maximum number of entries to keep
+    /// * `approximate` - If true, uses approximate trimming (keeps maxlen - 10%)
+    ///
+    /// Returns the number of entries removed, or None if key is not a stream.
+    pub fn xtrim(&self, key: &str, maxlen: usize, approximate: bool) -> Option<usize> {
+        if let Some(mut stored) = self.data.get_mut(key) {
+            match &mut stored.data {
+                RedisData::Stream(entries) => {
+                    let original_len = entries.len();
+                    if entries.len() > maxlen {
+                        let keep = if approximate {
+                            maxlen.saturating_sub(maxlen / 10)
+                        } else {
+                            maxlen
+                        };
+                        entries.drain(0..entries.len().saturating_sub(keep));
+                    }
+                    return Some(original_len.saturating_sub(entries.len()));
+                }
+                _ => return None,
+            }
+        }
+        None
+    }
+
+    /// Deletes entries from a stream.
+    ///
+    /// # Arguments
+    /// * `key` - The stream key
+    /// * `entry_ids` - Entry IDs to delete
+    ///
+    /// Returns the number of entries deleted, or None if key is not a stream.
+    pub fn xdel(&self, key: &str, entry_ids: Vec<&[u8]>) -> Option<usize> {
+        if let Some(mut stored) = self.data.get_mut(key) {
+            match &mut stored.data {
+                RedisData::Stream(entries) => {
+                    let original_len = entries.len();
+                    entries.retain(|(id, _)| {
+                        !entry_ids.contains(&id.as_slice())
+                    });
+                    return Some(original_len.saturating_sub(entries.len()));
+                }
+                _ => return None,
+            }
+        }
+        None
+    }
+
+    /// Returns entries in a stream within a range.
+    ///
+    /// # Arguments
+    /// * `key` - The stream key
+    /// * `start` - Start ID (use "-" for beginning)
+    /// * `end` - End ID (use "+" for end)
+    /// * `count` - Optional maximum number of entries to return
+    ///
+    /// Returns the entries in the range, or None if key is not a stream.
+    pub fn xrange(&self, key: &str, start: &[u8], end: &[u8], count: Option<usize>) -> Option<Vec<StreamEntry>> {
+        self.data.get(key).map(|stored| {
+            match &stored.data {
+                RedisData::Stream(entries) => {
+                    let mut result: Vec<_> = entries.iter()
+                        .filter(|(id, _)| {
+                            let ge_start = start == b"-" || id.as_slice() >= start;
+                            let le_end = end == b"+" || id.as_slice() <= end;
+                            ge_start && le_end
+                        })
+                        .cloned()
+                        .collect();
+                    
+                    if let Some(c) = count {
+                        result.truncate(c);
+                    }
+                    result
+                }
+                _ => vec![],
+            }
+        })
+    }
+
+    /// Returns entries in a stream within a range, in reverse order.
+    ///
+    /// # Arguments
+    /// * `key` - The stream key
+    /// * `start` - Start ID (use "+" for end)
+    /// * `end` - End ID (use "-" for beginning)
+    /// * `count` - Optional maximum number of entries to return
+    ///
+    /// Returns the entries in reverse order, or None if key is not a stream.
+    pub fn xrevrange(&self, key: &str, start: &[u8], end: &[u8], count: Option<usize>) -> Option<Vec<StreamEntry>> {
+        self.xrange(key, start, end, count).map(|mut entries| {
+            entries.reverse();
+            entries
+        })
+    }
+
+    fn generate_stream_id(&self) -> Vec<u8> {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        format!("{}-0", timestamp).into_bytes()
     }
 }
 
@@ -958,6 +1114,138 @@ impl Client {
     /// Returns `true` if the key existed and expiration was removed, `false` otherwise.
     pub async fn persist(&mut self, key: &str) -> bool {
         self.storage.persist(key)
+    }
+
+    /// Adds an entry to a stream.
+    ///
+    /// # Arguments
+    /// * `key` - The stream key
+    /// * `entry_id` - Optional custom entry ID (format: "timestamp-sequence"). If None, auto-generates
+    /// * `values` - Field-value pairs to add
+    ///
+    /// Returns the entry ID as a string.
+    pub async fn xadd<K, F, V>(&mut self, key: K, entry_id: Option<&str>, values: Vec<(F, V)>) -> RedisResult<String>
+    where
+        K: ToRedisArgs,
+        F: ToRedisArgs,
+        V: ToRedisArgs,
+    {
+        let key_str = Self::key_to_string(&key);
+        let entry_id_bytes = entry_id.map(|s| s.as_bytes().to_vec());
+        let values: Vec<(Vec<u8>, Vec<u8>)> = values
+            .into_iter()
+            .map(|(f, v)| (Self::value_to_vec(&f), Self::value_to_vec(&v)))
+            .collect();
+        
+        match self.storage.xadd(&key_str, entry_id_bytes.as_deref(), values) {
+            Some(id) => Ok(String::from_utf8_lossy(&id).to_string()),
+            None => Err(RedisError::WrongType),
+        }
+    }
+
+    /// Returns the number of entries in a stream.
+    pub async fn xlen<K>(&mut self, key: K) -> RedisResult<i64>
+    where
+        K: ToRedisArgs,
+    {
+        let key_str = Self::key_to_string(&key);
+        Ok(self.storage.xlen(&key_str).unwrap_or(0) as i64)
+    }
+
+    /// Trims a stream to a maximum number of entries.
+    ///
+    /// # Arguments
+    /// * `key` - The stream key
+    /// * `maxlen` - Maximum number of entries to keep
+    /// * `approximate` - If true, uses approximate trimming (trim to maxlen - 10%)
+    ///
+    /// Returns the number of entries removed.
+    pub async fn xtrim<K>(&mut self, key: K, maxlen: usize, approximate: bool) -> RedisResult<i64>
+    where
+        K: ToRedisArgs,
+    {
+        let key_str = Self::key_to_string(&key);
+        Ok(self.storage.xtrim(&key_str, maxlen, approximate).unwrap_or(0) as i64)
+    }
+
+    /// Deletes entries from a stream.
+    ///
+    /// Returns the number of entries deleted.
+    pub async fn xdel<K>(&mut self, key: K, entry_ids: Vec<&str>) -> RedisResult<i64>
+    where
+        K: ToRedisArgs,
+    {
+        let key_str = Self::key_to_string(&key);
+        let ids: Vec<&[u8]> = entry_ids.iter().map(|s| s.as_bytes()).collect();
+        Ok(self.storage.xdel(&key_str, ids).unwrap_or(0) as i64)
+    }
+
+    /// Returns entries in a stream within a range.
+    ///
+    /// # Arguments
+    /// * `key` - The stream key
+    /// * `start` - Start ID ("-" for beginning)
+    /// * `end` - End ID ("+" for end)
+    /// * `count` - Optional maximum number of entries to return
+    pub async fn xrange<K, RV>(&mut self, key: K, start: &str, end: &str, count: Option<usize>) -> RedisResult<RV>
+    where
+        K: ToRedisArgs,
+        RV: FromRedisValue,
+    {
+        let key_str = Self::key_to_string(&key);
+        let entries = self.storage.xrange(&key_str, start.as_bytes(), end.as_bytes(), count);
+        
+        match entries {
+            Some(entries) => {
+                let values: Vec<Value> = entries
+                    .into_iter()
+                    .map(|(id, fields)| {
+                        let mut arr = vec![Value::String(id)];
+                        for (field, value) in fields {
+                            arr.push(Value::String(field));
+                            arr.push(Value::String(value));
+                        }
+                        Value::Array(arr)
+                    })
+                    .collect();
+                FromRedisValue::from_redis_value(Value::Array(values))
+            }
+            None => FromRedisValue::from_redis_value(Value::Array(Vec::new())),
+        }
+    }
+
+    /// Returns entries in a stream within a range, in reverse order.
+    ///
+    /// # Arguments
+    /// * `key` - The stream key
+    /// * `start` - Start ID ("+" for end)
+    /// * `end` - End ID ("-" for beginning)
+    /// * `count` - Optional maximum number of entries to return
+    pub async fn xrevrange<K, RV>(&mut self, key: K, start: &str, end: &str, count: Option<usize>) -> RedisResult<RV>
+    where
+        K: ToRedisArgs,
+        RV: FromRedisValue,
+    {
+        let key_str = Self::key_to_string(&key);
+        let entries = self.storage.xrevrange(&key_str, start.as_bytes(), end.as_bytes(), count);
+        
+        match entries {
+            Some(entries) => {
+                let values: Vec<Value> = entries
+                    .into_iter()
+                    .map(|(id, fields)| {
+                        let mut arr = vec![Value::String(id)];
+                        for (field, value) in fields {
+                            arr.push(Value::String(field));
+                            arr.push(Value::String(value));
+                        }
+                        Value::Array(arr)
+                    })
+                    .collect();
+                FromRedisValue::from_redis_value(Value::Array(values))
+            }
+            None => FromRedisValue::from_redis_value(Value::Array(Vec::new())),
+        }
     }
 
     fn key_to_string<K: ToRedisArgs>(key: &K) -> String {
