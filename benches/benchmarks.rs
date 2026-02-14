@@ -1,6 +1,5 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use not_redis::{Client, StorageEngine};
-use std::sync::Arc;
 use tokio::runtime::Runtime;
 use tokio::task::JoinSet;
 
@@ -20,22 +19,26 @@ mod single_threaded {
 
         group.bench_function("set", |b| {
             let rt = runtime();
+            let mut client = Client::new();
+            block_on(&rt, client.start());
+            let _ = block_on(&rt, client.flushdb());
+
             b.iter(|| {
                 block_on(&rt, async {
-                    let mut client = Client::new();
-                    client.start().await;
                     client.set("key", "value").await.unwrap();
                 });
+                let _ = block_on(&rt, client.flushdb());
             });
         });
 
         group.bench_function("get_existing", |b| {
             let rt = runtime();
+            let mut client = Client::new();
+            block_on(&rt, client.start());
+            let _ = block_on(&rt, client.set("key", "value"));
+
             b.iter(|| {
                 block_on(&rt, async {
-                    let mut client = Client::new();
-                    client.start().await;
-                    client.set("key", "value").await.unwrap();
                     let _: String = client.get("key").await.unwrap();
                 });
             });
@@ -43,12 +46,15 @@ mod single_threaded {
 
         group.bench_function("get_missing", |b| {
             let rt = runtime();
+            let mut client = Client::new();
+            block_on(&rt, client.start());
+            let _ = block_on(&rt, client.flushdb());
+
             b.iter(|| {
                 block_on(&rt, async {
-                    let mut client = Client::new();
-                    client.start().await;
                     let _: String = client.get("nonexistent").await.unwrap();
                 });
+                let _ = block_on(&rt, client.flushdb());
             });
         });
 
@@ -60,22 +66,26 @@ mod single_threaded {
 
         group.bench_function("hset", |b| {
             let rt = runtime();
+            let mut client = Client::new();
+            block_on(&rt, client.start());
+            let _ = block_on(&rt, client.flushdb());
+
             b.iter(|| {
                 block_on(&rt, async {
-                    let mut client = Client::new();
-                    client.start().await;
                     client.hset("myhash", "field", "value").await.unwrap();
                 });
+                let _ = block_on(&rt, client.flushdb());
             });
         });
 
         group.bench_function("hget_existing", |b| {
             let rt = runtime();
+            let mut client = Client::new();
+            block_on(&rt, client.start());
+            let _ = block_on(&rt, client.hset("myhash", "field", "value"));
+
             b.iter(|| {
                 block_on(&rt, async {
-                    let mut client = Client::new();
-                    client.start().await;
-                    client.hset("myhash", "field", "value").await.unwrap();
                     let _: String = client.hget("myhash", "field").await.unwrap();
                 });
             });
@@ -83,12 +93,15 @@ mod single_threaded {
 
         group.bench_function("hget_missing", |b| {
             let rt = runtime();
+            let mut client = Client::new();
+            block_on(&rt, client.start());
+            let _ = block_on(&rt, client.flushdb());
+
             b.iter(|| {
                 block_on(&rt, async {
-                    let mut client = Client::new();
-                    client.start().await;
                     let _: String = client.hget("myhash", "nonexistent").await.unwrap();
                 });
+                let _ = block_on(&rt, client.flushdb());
             });
         });
 
@@ -100,33 +113,40 @@ mod single_threaded {
 
         group.bench_function("lpush", |b| {
             let rt = runtime();
+            let mut client = Client::new();
+            block_on(&rt, client.start());
+            let _ = block_on(&rt, client.flushdb());
+
             b.iter(|| {
                 block_on(&rt, async {
-                    let mut client = Client::new();
-                    client.start().await;
                     client.lpush("mylist", "value").await.unwrap();
                 });
+                let _ = block_on(&rt, client.flushdb());
             });
         });
 
         group.bench_function("rpush", |b| {
             let rt = runtime();
+            let mut client = Client::new();
+            block_on(&rt, client.start());
+            let _ = block_on(&rt, client.flushdb());
+
             b.iter(|| {
                 block_on(&rt, async {
-                    let mut client = Client::new();
-                    client.start().await;
                     client.rpush("mylist", "value").await.unwrap();
                 });
+                let _ = block_on(&rt, client.flushdb());
             });
         });
 
         group.bench_function("llen", |b| {
             let rt = runtime();
+            let mut client = Client::new();
+            block_on(&rt, client.start());
+            let _ = block_on(&rt, client.lpush("mylist", "value"));
+
             b.iter(|| {
                 block_on(&rt, async {
-                    let mut client = Client::new();
-                    client.start().await;
-                    client.lpush("mylist", "value").await.unwrap();
                     let _: i64 = client.llen("mylist").await.unwrap();
                 });
             });
@@ -140,22 +160,26 @@ mod single_threaded {
 
         group.bench_function("sadd", |b| {
             let rt = runtime();
+            let mut client = Client::new();
+            block_on(&rt, client.start());
+            let _ = block_on(&rt, client.flushdb());
+
             b.iter(|| {
                 block_on(&rt, async {
-                    let mut client = Client::new();
-                    client.start().await;
                     client.sadd("myset", "member").await.unwrap();
                 });
+                let _ = block_on(&rt, client.flushdb());
             });
         });
 
         group.bench_function("smembers", |b| {
             let rt = runtime();
+            let mut client = Client::new();
+            block_on(&rt, client.start());
+            let _ = block_on(&rt, client.sadd("myset", "member"));
+
             b.iter(|| {
                 block_on(&rt, async {
-                    let mut client = Client::new();
-                    client.start().await;
-                    client.sadd("myset", "member").await.unwrap();
                     let _: Vec<String> = client.smembers("myset").await.unwrap();
                 });
             });
@@ -178,21 +202,23 @@ mod concurrency {
                 &num_tasks,
                 |b, &num_tasks| {
                     let rt = runtime();
-                    b.iter(move || {
-                        let num_tasks = num_tasks;
-                        block_on(&rt, async move {
-                            let storage = Arc::new(StorageEngine::new());
-                            storage.start_expiration_sweeper().await;
+                    let storage = StorageEngine::new();
+                    block_on(&rt, async {
+                        storage.start_expiration_sweeper().await;
+                    });
 
+                    b.iter(|| {
+                        block_on(&rt, async {
                             let mut set = JoinSet::new();
                             for i in 0..num_tasks {
-                                let _storage = Arc::clone(&storage);
+                                let storage = storage.clone();
                                 set.spawn(async move {
-                                    let mut client = Client::from_storage(StorageEngine::new());
+                                    let mut client = Client::from_storage(storage);
                                     client.set(format!("key{}", i), "value").await.unwrap();
                                 });
                             }
                             while set.join_next().await.is_some() {}
+                            let _ = storage.flush();
                         });
                     });
                 },
@@ -211,20 +237,23 @@ mod concurrency {
                 &num_tasks,
                 |b, &num_tasks| {
                     let rt = runtime();
-                    b.iter(move || {
-                        let num_tasks = num_tasks;
-                        block_on(&rt, async move {
-                            let storage = Arc::new(StorageEngine::new());
-                            storage.start_expiration_sweeper().await;
+                    let storage = StorageEngine::new();
+                    block_on(&rt, async {
+                        storage.start_expiration_sweeper().await;
+                    });
 
+                    b.iter(|| {
+                        block_on(&rt, async {
                             let mut set = JoinSet::new();
                             for _ in 0..num_tasks {
+                                let storage = storage.clone();
                                 set.spawn(async move {
-                                    let mut client = Client::from_storage(StorageEngine::new());
+                                    let mut client = Client::from_storage(storage);
                                     client.set("same_key", "value").await.unwrap();
                                 });
                             }
                             while set.join_next().await.is_some() {}
+                            let _ = storage.flush();
                         });
                     });
                 },
@@ -243,18 +272,26 @@ mod concurrency {
                 &num_tasks,
                 |b, &num_tasks| {
                     let rt = runtime();
-                    b.iter(move || {
-                        let num_tasks = num_tasks;
-                        block_on(&rt, async move {
-                            let storage = Arc::new(StorageEngine::new());
-                            storage.start_expiration_sweeper().await;
+                    let storage = StorageEngine::new();
+                    block_on(&rt, async {
+                        storage.start_expiration_sweeper().await;
+                    });
 
+                    // Pre-populate data
+                    block_on(&rt, async {
+                        let mut client = Client::from_storage(storage.clone());
+                        for i in 0..num_tasks {
+                            client.set(format!("key{}", i), "value").await.unwrap();
+                        }
+                    });
+
+                    b.iter(|| {
+                        block_on(&rt, async {
                             let mut set = JoinSet::new();
                             for i in 0..num_tasks {
-                                let mut client = Client::from_storage(StorageEngine::new());
-                                client.set(format!("key{}", i), "value").await.unwrap();
+                                let storage = storage.clone();
                                 set.spawn(async move {
-                                    let mut client = Client::from_storage(StorageEngine::new());
+                                    let mut client = Client::from_storage(storage);
                                     let _: String = client.get(format!("key{}", i)).await.unwrap();
                                 });
                             }
@@ -277,19 +314,24 @@ mod concurrency {
                 &num_tasks,
                 |b, &num_tasks| {
                     let rt = runtime();
-                    b.iter(move || {
-                        let num_tasks = num_tasks;
-                        block_on(&rt, async move {
-                            let storage = Arc::new(StorageEngine::new());
-                            storage.start_expiration_sweeper().await;
+                    let storage = StorageEngine::new();
+                    block_on(&rt, async {
+                        storage.start_expiration_sweeper().await;
+                    });
 
-                            let mut init_client = Client::from_storage(StorageEngine::new());
-                            init_client.set("same_key", "value").await.unwrap();
+                    // Pre-populate data
+                    block_on(&rt, async {
+                        let mut client = Client::from_storage(storage.clone());
+                        client.set("same_key", "value").await.unwrap();
+                    });
 
+                    b.iter(|| {
+                        block_on(&rt, async {
                             let mut set = JoinSet::new();
                             for _ in 0..num_tasks {
+                                let storage = storage.clone();
                                 set.spawn(async move {
-                                    let mut client = Client::from_storage(StorageEngine::new());
+                                    let mut client = Client::from_storage(storage);
                                     let _: String = client.get("same_key").await.unwrap();
                                 });
                             }
@@ -312,16 +354,18 @@ mod concurrency {
                 &num_tasks,
                 |b, &num_tasks| {
                     let rt = runtime();
-                    b.iter(move || {
-                        let num_tasks = num_tasks;
-                        block_on(&rt, async move {
-                            let storage = Arc::new(StorageEngine::new());
-                            storage.start_expiration_sweeper().await;
+                    let storage = StorageEngine::new();
+                    block_on(&rt, async {
+                        storage.start_expiration_sweeper().await;
+                    });
 
+                    b.iter(|| {
+                        block_on(&rt, async {
                             let mut set = JoinSet::new();
                             for i in 0..num_tasks {
+                                let storage = storage.clone();
                                 set.spawn(async move {
-                                    let mut client = Client::from_storage(StorageEngine::new());
+                                    let mut client = Client::from_storage(storage);
                                     client
                                         .hset("myhash", format!("field{}", i), "value")
                                         .await
@@ -329,6 +373,7 @@ mod concurrency {
                                 });
                             }
                             while set.join_next().await.is_some() {}
+                            let _ = storage.flush();
                         });
                     });
                 },
@@ -347,27 +392,32 @@ mod concurrency {
                 &num_tasks,
                 |b, &num_tasks| {
                     let rt = runtime();
-                    b.iter(move || {
-                        let num_tasks = num_tasks;
-                        block_on(&rt, async move {
-                            let storage = Arc::new(StorageEngine::new());
-                            storage.start_expiration_sweeper().await;
+                    let storage = StorageEngine::new();
+                    block_on(&rt, async {
+                        storage.start_expiration_sweeper().await;
+                    });
 
-                            let mut init_client = Client::from_storage(StorageEngine::new());
-                            for i in 0..num_tasks {
-                                init_client.set(format!("key{}", i), "value").await.unwrap();
-                            }
+                    // Pre-populate data
+                    block_on(&rt, async {
+                        let mut client = Client::from_storage(storage.clone());
+                        for i in 0..num_tasks {
+                            client.set(format!("key{}", i), "value").await.unwrap();
+                        }
+                    });
 
+                    b.iter(|| {
+                        block_on(&rt, async {
                             let mut set = JoinSet::new();
                             for i in 0..num_tasks {
+                                let storage = storage.clone();
                                 if i % 2 == 0 {
                                     set.spawn(async move {
-                                        let mut client = Client::from_storage(StorageEngine::new());
+                                        let mut client = Client::from_storage(storage);
                                         client.set(format!("key{}", i), "newvalue").await.unwrap();
                                     });
                                 } else {
                                     set.spawn(async move {
-                                        let mut client = Client::from_storage(StorageEngine::new());
+                                        let mut client = Client::from_storage(storage);
                                         let _: String =
                                             client.get(format!("key{}", i)).await.unwrap();
                                     });
@@ -392,20 +442,23 @@ mod concurrency {
                 &num_tasks,
                 |b, &num_tasks| {
                     let rt = runtime();
-                    b.iter(move || {
-                        let num_tasks = num_tasks;
-                        block_on(&rt, async move {
-                            let storage = Arc::new(StorageEngine::new());
-                            storage.start_expiration_sweeper().await;
+                    let storage = StorageEngine::new();
+                    block_on(&rt, async {
+                        storage.start_expiration_sweeper().await;
+                    });
 
+                    b.iter(|| {
+                        block_on(&rt, async {
                             let mut set = JoinSet::new();
                             for i in 0..num_tasks {
+                                let storage = storage.clone();
                                 set.spawn(async move {
-                                    let mut client = Client::from_storage(StorageEngine::new());
+                                    let mut client = Client::from_storage(storage);
                                     client.lpush("mylist", format!("value{}", i)).await.unwrap();
                                 });
                             }
                             while set.join_next().await.is_some() {}
+                            let _ = storage.flush();
                         });
                     });
                 },
@@ -424,19 +477,24 @@ mod concurrency {
                 &num_tasks,
                 |b, &num_tasks| {
                     let rt = runtime();
-                    b.iter(move || {
-                        let num_tasks = num_tasks;
-                        block_on(&rt, async move {
-                            let storage = Arc::new(StorageEngine::new());
-                            storage.start_expiration_sweeper().await;
+                    let storage = StorageEngine::new();
+                    block_on(&rt, async {
+                        storage.start_expiration_sweeper().await;
+                    });
 
-                            let mut init_client = Client::from_storage(StorageEngine::new());
-                            init_client.set("contended_key", "initial").await.unwrap();
+                    // Pre-populate data
+                    block_on(&rt, async {
+                        let mut client = Client::from_storage(storage.clone());
+                        client.set("contended_key", "initial").await.unwrap();
+                    });
 
+                    b.iter(|| {
+                        block_on(&rt, async {
                             let mut set = JoinSet::new();
                             for _ in 0..num_tasks {
+                                let storage = storage.clone();
                                 set.spawn(async move {
-                                    let mut client = Client::from_storage(StorageEngine::new());
+                                    let mut client = Client::from_storage(storage);
                                     let _: String = client.get("contended_key").await.unwrap();
                                 });
                             }
@@ -463,16 +521,17 @@ mod throughput {
                 &batch_size,
                 |b, &batch_size| {
                     let rt = runtime();
-                    b.iter(move || {
-                        let batch_size = batch_size;
-                        block_on(&rt, async move {
-                            let mut client = Client::new();
-                            client.start().await;
+                    let mut client = Client::new();
+                    block_on(&rt, client.start());
+                    let _ = block_on(&rt, client.flushdb());
 
+                    b.iter(move || {
+                        block_on(&rt, async {
                             for i in 0..batch_size {
                                 client.set(format!("key{}", i), "value").await.unwrap();
                             }
                         });
+                        let _ = block_on(&rt, client.flushdb());
                     });
                 },
             );
@@ -490,16 +549,16 @@ mod throughput {
                 &batch_size,
                 |b, &batch_size| {
                     let rt = runtime();
+                    let mut client = Client::new();
+                    block_on(&rt, client.start());
+
+                    // Pre-populate data
+                    for i in 0..batch_size {
+                        let _ = block_on(&rt, client.set(format!("key{}", i), "value"));
+                    }
+
                     b.iter(move || {
-                        let batch_size = batch_size;
-                        block_on(&rt, async move {
-                            let mut client = Client::new();
-                            client.start().await;
-
-                            for i in 0..batch_size {
-                                client.set(format!("key{}", i), "value").await.unwrap();
-                            }
-
+                        block_on(&rt, async {
                             for i in 0..batch_size {
                                 let _: String = client.get(format!("key{}", i)).await.unwrap();
                             }
@@ -516,11 +575,12 @@ mod throughput {
 
         group.bench_function("set_get_loop_1000", |b| {
             let rt = runtime();
+            let mut client = Client::new();
+            block_on(&rt, client.start());
+            let _ = block_on(&rt, client.flushdb());
+
             b.iter(|| {
                 block_on(&rt, async {
-                    let mut client = Client::new();
-                    client.start().await;
-
                     for i in 0..1000 {
                         client.set(format!("key{}", i), "value").await.unwrap();
                     }
@@ -528,6 +588,7 @@ mod throughput {
                         let _: String = client.get(format!("key{}", i)).await.unwrap();
                     }
                 });
+                let _ = block_on(&rt, client.flushdb());
             });
         });
 
