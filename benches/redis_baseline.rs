@@ -12,8 +12,8 @@ mod single_threaded {
 
         group.bench_function("set", |b| {
             let client = get_redis_client();
+            let mut con = client.get_connection().expect("Failed to get connection");
             b.iter(|| {
-                let mut con = client.get_connection().expect("Failed to get connection");
                 let _: () = redis::cmd("SET")
                     .arg("key")
                     .arg("value")
@@ -24,8 +24,8 @@ mod single_threaded {
 
         group.bench_function("get_existing", |b| {
             let client = get_redis_client();
+            let mut con = client.get_connection().expect("Failed to get connection");
             b.iter(|| {
-                let mut con = client.get_connection().expect("Failed to get connection");
                 let _: () = redis::cmd("SET")
                     .arg("key")
                     .arg("value")
@@ -40,8 +40,8 @@ mod single_threaded {
 
         group.bench_function("get_missing", |b| {
             let client = get_redis_client();
+            let mut con = client.get_connection().expect("Failed to get connection");
             b.iter(|| {
-                let mut con = client.get_connection().expect("Failed to get connection");
                 let result: Option<String> = redis::cmd("GET")
                     .arg("nonexistent")
                     .query(&mut con)
@@ -58,8 +58,8 @@ mod single_threaded {
 
         group.bench_function("hset", |b| {
             let client = get_redis_client();
+            let mut con = client.get_connection().expect("Failed to get connection");
             b.iter(|| {
-                let mut con = client.get_connection().expect("Failed to get connection");
                 let _: () = redis::cmd("HSET")
                     .arg("myhash")
                     .arg("field")
@@ -71,8 +71,8 @@ mod single_threaded {
 
         group.bench_function("hget_existing", |b| {
             let client = get_redis_client();
+            let mut con = client.get_connection().expect("Failed to get connection");
             b.iter(|| {
-                let mut con = client.get_connection().expect("Failed to get connection");
                 let _: () = redis::cmd("HSET")
                     .arg("myhash")
                     .arg("field")
@@ -89,8 +89,8 @@ mod single_threaded {
 
         group.bench_function("hget_missing", |b| {
             let client = get_redis_client();
+            let mut con = client.get_connection().expect("Failed to get connection");
             b.iter(|| {
-                let mut con = client.get_connection().expect("Failed to get connection");
                 let result: Option<String> = redis::cmd("HGET")
                     .arg("myhash")
                     .arg("nonexistent")
@@ -108,8 +108,8 @@ mod single_threaded {
 
         group.bench_function("lpush", |b| {
             let client = get_redis_client();
+            let mut con = client.get_connection().expect("Failed to get connection");
             b.iter(|| {
-                let mut con = client.get_connection().expect("Failed to get connection");
                 let _: () = redis::cmd("LPUSH")
                     .arg("mylist")
                     .arg("value")
@@ -120,8 +120,8 @@ mod single_threaded {
 
         group.bench_function("rpush", |b| {
             let client = get_redis_client();
+            let mut con = client.get_connection().expect("Failed to get connection");
             b.iter(|| {
-                let mut con = client.get_connection().expect("Failed to get connection");
                 let _: () = redis::cmd("RPUSH")
                     .arg("mylist")
                     .arg("value")
@@ -132,8 +132,8 @@ mod single_threaded {
 
         group.bench_function("llen", |b| {
             let client = get_redis_client();
+            let mut con = client.get_connection().expect("Failed to get connection");
             b.iter(|| {
-                let mut con = client.get_connection().expect("Failed to get connection");
                 let _: () = redis::cmd("LPUSH")
                     .arg("mylist")
                     .arg("value")
@@ -154,8 +154,8 @@ mod single_threaded {
 
         group.bench_function("sadd", |b| {
             let client = get_redis_client();
+            let mut con = client.get_connection().expect("Failed to get connection");
             b.iter(|| {
-                let mut con = client.get_connection().expect("Failed to get connection");
                 let _: () = redis::cmd("SADD")
                     .arg("myset")
                     .arg("member")
@@ -166,8 +166,8 @@ mod single_threaded {
 
         group.bench_function("smembers", |b| {
             let client = get_redis_client();
+            let mut con = client.get_connection().expect("Failed to get connection");
             b.iter(|| {
-                let mut con = client.get_connection().expect("Failed to get connection");
                 let _: () = redis::cmd("SADD")
                     .arg("myset")
                     .arg("member")
@@ -196,10 +196,9 @@ mod throughput {
                 criterion::BenchmarkId::from_parameter(batch_size),
                 &batch_size,
                 |b, &batch_size| {
+                    let client = get_redis_client();
+                    let mut con = client.get_connection().expect("Failed to get connection");
                     b.iter(move || {
-                        let client = get_redis_client();
-                        let mut con = client.get_connection().expect("Failed to get connection");
-
                         for i in 0..batch_size {
                             let _: () = redis::cmd("SET")
                                 .arg(format!("key{}", i))
@@ -223,18 +222,18 @@ mod throughput {
                 criterion::BenchmarkId::from_parameter(batch_size),
                 &batch_size,
                 |b, &batch_size| {
+                    let client = get_redis_client();
+                    let mut con = client.get_connection().expect("Failed to get connection");
+
+                    for i in 0..batch_size {
+                        let _: () = redis::cmd("SET")
+                            .arg(format!("key{}", i))
+                            .arg("value")
+                            .query(&mut con)
+                            .expect("Failed to execute SET");
+                    }
+
                     b.iter(move || {
-                        let client = get_redis_client();
-                        let mut con = client.get_connection().expect("Failed to get connection");
-
-                        for i in 0..batch_size {
-                            let _: () = redis::cmd("SET")
-                                .arg(format!("key{}", i))
-                                .arg("value")
-                                .query(&mut con)
-                                .expect("Failed to execute SET");
-                        }
-
                         for i in 0..batch_size {
                             let _: String = redis::cmd("GET")
                                 .arg(format!("key{}", i))
@@ -252,10 +251,9 @@ mod throughput {
         let mut group = c.benchmark_group("throughput/sequential");
 
         group.bench_function("set_get_loop_1000", |b| {
+            let client = get_redis_client();
+            let mut con = client.get_connection().expect("Failed to get connection");
             b.iter(|| {
-                let client = get_redis_client();
-                let mut con = client.get_connection().expect("Failed to get connection");
-
                 for i in 0..1000 {
                     let _: () = redis::cmd("SET")
                         .arg(format!("key{}", i))
