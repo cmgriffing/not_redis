@@ -18,7 +18,12 @@ thiserror = "2.0"
 [dev-dependencies]
 tokio = { version = "1.0", features = ["test-util"] }
 criterion = { version = "0.5", features = ["async"] }
+redis = "0.27"
 
 [[bench]]
 name = "benchmarks"
+harness = false
+
+[[bench]]
+name = "redis_baseline"
 harness = false
