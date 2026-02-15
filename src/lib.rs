@@ -49,7 +49,8 @@
 #![warn(missing_docs)]
 
 use dashmap::DashMap;
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use rustc_hash::{FxHashMap, FxHashSet};
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use thiserror::Error;
@@ -141,8 +142,8 @@ pub type StreamEntry = (Vec<u8>, Vec<(Vec<u8>, Vec<u8>)>);
 pub enum RedisData {
     String(Vec<u8>),
     List(VecDeque<Vec<u8>>),
-    Set(HashSet<Vec<u8>>),
-    Hash(HashMap<Vec<u8>, Vec<u8>>),
+    Set(FxHashSet<Vec<u8>>),
+    Hash(FxHashMap<Vec<u8>, Vec<u8>>),
     ZSet(BTreeMap<Vec<u8>, f64>),
     Stream(Vec<StreamEntry>),
 }
@@ -164,7 +165,7 @@ impl StoredValue {
 
 #[derive(Clone)]
 struct ExpirationManager {
-    expirations: Arc<Mutex<BTreeMap<Instant, HashSet<String>>>>,
+    expirations: Arc<Mutex<BTreeMap<Instant, FxHashSet<String>>>>,
     sweep_interval: Duration,
 }
 
@@ -861,7 +862,7 @@ impl Client {
                 _ => return Err(RedisError::WrongType),
             }
         } else {
-            let mut h = HashMap::new();
+            let mut h = FxHashMap::default();
             h.insert(field_b.clone(), value_b);
             self.storage.set(&key_str, RedisData::Hash(h), None);
             true
@@ -1060,7 +1061,7 @@ impl Client {
                 _ => Err(RedisError::WrongType),
             }
         } else {
-            let mut s = HashSet::new();
+            let mut s = FxHashSet::default();
             s.insert(member_b);
             self.storage.set(&key_str, RedisData::Set(s), None);
             Ok(1)

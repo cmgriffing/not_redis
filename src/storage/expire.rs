@@ -1,6 +1,7 @@
 //! Key expiration management.
 
-use std::collections::{BTreeMap, HashSet};
+use rustc_hash::FxHashSet;
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::time;
@@ -10,7 +11,7 @@ use tokio::time;
 /// Uses a time-ordered map to efficiently find expired keys
 /// and a background task to periodically sweep and remove them.
 pub struct ExpirationManager {
-    expirations: Arc<Mutex<BTreeMap<Instant, HashSet<String>>>>,
+    expirations: Arc<Mutex<BTreeMap<Instant, FxHashSet<String>>>>,
     sweep_interval: Duration,
 }
 
@@ -24,7 +25,7 @@ impl ExpirationManager {
 
     pub fn schedule_expiration(&self, key: String, expire_at: Instant) {
         let mut expirations = self.expirations.lock().unwrap();
-        let entry = expirations.entry(expire_at).or_insert_with(HashSet::new);
+        let entry = expirations.entry(expire_at).or_insert_with(FxHashSet::default);
         entry.insert(key);
     }
 

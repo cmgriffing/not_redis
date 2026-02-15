@@ -1,6 +1,7 @@
 //! Internal data types for the storage engine.
 
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use rustc_hash::{FxHashMap, FxHashSet};
+use std::collections::{BTreeMap, VecDeque};
 use std::time::Instant;
 
 /// Internal data types stored in the engine.
@@ -11,8 +12,8 @@ use std::time::Instant;
 pub enum RedisData {
     String(Vec<u8>),
     List(VecDeque<Vec<u8>>),
-    Set(HashSet<Vec<u8>>),
-    Hash(HashMap<Vec<u8>, Vec<u8>>),
+    Set(FxHashSet<Vec<u8>>),
+    Hash(FxHashMap<Vec<u8>, Vec<u8>>),
     ZSet(BTreeMap<Vec<u8>, f64>),
 }
 
