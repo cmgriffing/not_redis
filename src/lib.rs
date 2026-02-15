@@ -853,8 +853,7 @@ impl Client {
         let is_new = if let Some(val) = self.storage.get(&key_str) {
             match val.data {
                 RedisData::Hash(mut h) => {
-                    let is_new = !h.contains_key(&field_b);
-                    h.insert(field_b.clone(), value_b);
+                    let is_new = h.insert(field_b, value_b).is_none();
                     self.storage
                         .set(&key_str, RedisData::Hash(h), val.expire_at);
                     is_new
@@ -863,7 +862,7 @@ impl Client {
             }
         } else {
             let mut h = FxHashMap::default();
-            h.insert(field_b.clone(), value_b);
+            h.insert(field_b, value_b);
             self.storage.set(&key_str, RedisData::Hash(h), None);
             true
         };
@@ -975,9 +974,10 @@ impl Client {
             match val.data {
                 RedisData::List(mut l) => {
                     l.push_front(val_b);
+                    let len = l.len();
                     self.storage
-                        .set(&key_str, RedisData::List(l.clone()), val.expire_at);
-                    l.len() as i64
+                        .set(&key_str, RedisData::List(l), val.expire_at);
+                    len as i64
                 }
                 _ => return Err(RedisError::WrongType),
             }
@@ -1004,9 +1004,10 @@ impl Client {
             match val.data {
                 RedisData::List(mut l) => {
                     l.push_back(val_b);
+                    let len = l.len();
                     self.storage
-                        .set(&key_str, RedisData::List(l.clone()), val.expire_at);
-                    l.len() as i64
+                        .set(&key_str, RedisData::List(l), val.expire_at);
+                    len as i64
                 }
                 _ => return Err(RedisError::WrongType),
             }
@@ -1054,7 +1055,7 @@ impl Client {
         if let Some(val) = self.storage.get(&key_str) {
             match val.data {
                 RedisData::Set(mut s) => {
-                    let added = s.insert(member_b.clone());
+                    let added = s.insert(member_b);
                     self.storage.set(&key_str, RedisData::Set(s), val.expire_at);
                     Ok(if added { 1 } else { 0 })
                 }
