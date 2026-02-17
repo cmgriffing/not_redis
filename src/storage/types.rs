@@ -31,4 +31,33 @@ impl StoredValue {
             None => false,
         }
     }
+
+    pub fn estimated_size(&self) -> usize {
+        self.data.estimated_size()
+    }
+}
+
+impl RedisData {
+    pub fn estimated_size(&self) -> usize {
+        match self {
+            RedisData::String(data) => data.len(),
+            RedisData::List(deque) => {
+                deque.iter().map(|v| v.len()).sum::<usize>()
+                    + std::mem::size_of::<Vec<u8>>() * deque.capacity()
+            }
+            RedisData::Set(set) => {
+                set.iter().map(|v| v.len()).sum::<usize>()
+                    + std::mem::size_of::<Vec<u8>>() * set.capacity()
+            }
+            RedisData::Hash(map) => {
+                map.iter().map(|(k, v)| k.len() + v.len()).sum::<usize>()
+                    + std::mem::size_of::<(Vec<u8>, Vec<u8>)>() * map.capacity()
+            }
+            RedisData::ZSet(map) => {
+                map.iter().map(|(k, _)| k.len()).sum::<usize>()
+                    + std::mem::size_of::<(Vec<u8>, f64)>() * map.capacity()
+                    + std::mem::size_of::<f64>()
+            }
+        }
+    }
 }

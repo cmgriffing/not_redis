@@ -5,6 +5,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use dashmap::DashMap;
 
+use super::config::{MaxMemoryPolicy, StorageConfig};
+use super::memory::MemoryTracker;
 use super::types::{RedisData, StoredValue};
 use super::expire::ExpirationManager;
 
@@ -16,6 +18,7 @@ use super::expire::ExpirationManager;
 pub struct StorageEngine {
     data: Arc<DashMap<String, StoredValue>>,
     expiration: ExpirationManager,
+    memory: MemoryTracker,
 }
 
 impl StorageEngine {
@@ -27,12 +30,31 @@ impl StorageEngine {
         let engine = Self {
             data: Arc::new(DashMap::new()),
             expiration: ExpirationManager::new(sweep_interval_ms),
+            memory: MemoryTracker::new(),
         };
         engine
     }
 
     pub fn new(sweep_interval_ms: u64) -> Self {
         Self::new_with_sweep_interval(sweep_interval_ms)
+    }
+
+    pub fn with_config(config: StorageConfig) -> Self {
+        let mut engine = Self {
+            data: Arc::new(DashMap::new()),
+            expiration: ExpirationManager::new(100),
+            memory: MemoryTracker::new(),
+        };
+        
+        if let Some(maxmemory) = config.maxmemory {
+            let rt = tokio::runtime::Handle::current();
+            rt.block_on(engine.memory.set_maxmemory(Some(maxmemory)));
+        }
+        
+        let rt = tokio::runtime::Handle::current();
+        rt.block_on(engine.memory.set_maxmemory_policy(config.maxmemory_policy));
+        
+        engine
     }
 
     pub async fn start_expiration_sweeper(&self) {
@@ -47,29 +69,73 @@ impl StorageEngine {
     }
 
     pub fn set(&self, key: &str, value: RedisData, expire_at: Option<Instant>) {
-        if let Some(old) = self.data.get(key) {
-            if old.expire_at.is_some() {
-                self.expiration.cancel_expiration(key);
-            }
+        let rt = tokio::runtime::Handle::current();
+        
+        if rt.block_on(self.memory.should_reject_write()) {
+            return;
         }
 
+        let old_value = self.data.get(key).cloned();
+        
         let stored = StoredValue {
             data: value,
             expire_at,
         };
+
+        let memory_delta = stored.estimated_size() - old_value.as_ref().map(|v| v.estimated_size()).unwrap_or(0);
+        
+        rt.block_on(async {
+            if memory_delta > 0 {
+                while self.memory.check_eviction_needed().await {
+                    if let Some(evicted_key) = self.memory.evict_one(&|k| self.data.get(k).cloned()).await {
+                        if let Some(evicted) = self.data.remove(&evicted_key) {
+                            self.expiration.cancel_expiration(&evicted_key);
+                            self.memory.remove_memory(&evicted_key, &evicted).await;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+            }
+        });
+
+        if let Some(ref old) = old_value {
+            if old.expire_at.is_some() {
+                self.expiration.cancel_expiration(key);
+            }
+            rt.block_on(self.memory.remove_memory(key, old));
+        }
 
         self.data.insert(key.to_string(), stored);
 
         if let Some(at) = expire_at {
             self.expiration.schedule_expiration(key.to_string(), at);
         }
+        
+        rt.block_on(async {
+            if let Some(new_value) = self.data.get(key) {
+                self.memory.add_memory(key, &new_value).await;
+            }
+        });
     }
 
     pub fn get(&self, key: &str) -> Option<StoredValue> {
-        self.data.get(key).map(|v| v.clone())
+        let value = self.data.get(key).map(|v| v.clone());
+        
+        if value.is_some() {
+            let rt = tokio::runtime::Handle::current();
+            rt.block_on(self.memory.record_read(key));
+        }
+        
+        value
     }
 
     pub fn remove(&self, key: &str) -> bool {
+        if let Some(old) = self.data.get(key) {
+            let rt = tokio::runtime::Handle::current();
+            rt.block_on(self.memory.remove_memory(key, &old));
+        }
+        
         self.expiration.cancel_expiration(key);
         self.data.remove(key).is_some()
     }
@@ -227,6 +293,26 @@ impl StorageEngine {
             .unwrap()
             .as_millis() as u64;
         format!("{}-0", timestamp).into_bytes()
+    }
+
+    pub async fn set_maxmemory(&self, maxmemory: usize) {
+        self.memory.set_maxmemory(Some(maxmemory)).await;
+    }
+
+    pub async fn set_maxmemory_policy(&self, policy: MaxMemoryPolicy) {
+        self.memory.set_maxmemory_policy(policy).await;
+    }
+
+    pub async fn get_maxmemory(&self) -> Option<usize> {
+        self.memory.get_maxmemory().await
+    }
+
+    pub async fn get_maxmemory_policy(&self) -> MaxMemoryPolicy {
+        self.memory.get_maxmemory_policy().await
+    }
+
+    pub fn current_memory_usage(&self) -> usize {
+        self.memory.current_memory()
     }
 }
 

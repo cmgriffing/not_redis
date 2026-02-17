@@ -1,5 +1,6 @@
 use std::time::Duration;
 use crate::storage::StorageEngine;
+use crate::storage::config::{MaxMemoryPolicy, StorageConfig};
 use crate::types::{ToRedisArgs, FromRedisValue, Value};
 use crate::error::{RedisResult, RedisError};
 use crate::commands::{Cmd, SetOptions, IntegerReplyOrNoOp, CopyOptions, execute_command};
@@ -774,6 +775,63 @@ impl Client {
     /// are properly cleaned up.
     pub async fn start(&self) {
         self.storage.start_expiration_sweeper().await;
+    }
+
+    pub fn builder() -> ClientBuilder {
+        ClientBuilder::new()
+    }
+
+    pub async fn set_maxmemory(&self, maxmemory: usize) {
+        self.storage.set_maxmemory(maxmemory).await;
+    }
+
+    pub async fn set_maxmemory_policy(&self, policy: MaxMemoryPolicy) {
+        self.storage.set_maxmemory_policy(policy).await;
+    }
+
+    pub async fn get_maxmemory(&self) -> Option<usize> {
+        self.storage.get_maxmemory().await
+    }
+
+    pub async fn get_maxmemory_policy(&self) -> MaxMemoryPolicy {
+        self.storage.get_maxmemory_policy().await
+    }
+
+    pub fn current_memory_usage(&self) -> usize {
+        self.storage.current_memory_usage()
+    }
+}
+
+pub struct ClientBuilder {
+    config: StorageConfig,
+}
+
+impl ClientBuilder {
+    pub fn new() -> Self {
+        Self {
+            config: StorageConfig::new(),
+        }
+    }
+
+    pub fn maxmemory(mut self, maxmemory: usize) -> Self {
+        self.config.maxmemory = Some(maxmemory);
+        self
+    }
+
+    pub fn maxmemory_policy(mut self, policy: MaxMemoryPolicy) -> Self {
+        self.config.maxmemory_policy = policy;
+        self
+    }
+
+    pub fn build(self) -> Client {
+        let storage = StorageEngine::with_config(self.config);
+        Client { storage }
+    }
+}
+
+impl Default for ClientBuilder {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
