@@ -71,7 +71,9 @@ impl StorageEngine {
     pub fn set(&self, key: &str, value: RedisData, expire_at: Option<Instant>) {
         let rt = tokio::runtime::Handle::current();
         
-        if rt.block_on(self.memory.should_reject_write()) {
+        let memory_enabled = rt.block_on(self.memory.is_enabled());
+        
+        if memory_enabled && rt.block_on(self.memory.should_reject_write()) {
             return;
         }
 
@@ -82,28 +84,32 @@ impl StorageEngine {
             expire_at,
         };
 
-        let memory_delta = stored.estimated_size() - old_value.as_ref().map(|v| v.estimated_size()).unwrap_or(0);
-        
-        rt.block_on(async {
-            if memory_delta > 0 {
-                while self.memory.check_eviction_needed().await {
-                    if let Some(evicted_key) = self.memory.evict_one(&|k| self.data.get(k).cloned()).await {
-                        if let Some(evicted) = self.data.remove(&evicted_key) {
-                            self.expiration.cancel_expiration(&evicted_key);
-                            self.memory.remove_memory(&evicted_key, &evicted).await;
+        if memory_enabled {
+            let memory_delta = stored.estimated_size() - old_value.as_ref().map(|v| v.estimated_size()).unwrap_or(0);
+            
+            rt.block_on(async {
+                if memory_delta > 0 {
+                    while self.memory.check_eviction_needed().await {
+                        if let Some(evicted_key) = self.memory.evict_one(&|k| self.data.get(k).cloned()).await {
+                            if let Some(evicted) = self.data.remove(&evicted_key) {
+                                self.expiration.cancel_expiration(&evicted_key);
+                                self.memory.remove_memory(&evicted_key, &evicted).await;
+                            }
+                        } else {
+                            break;
                         }
-                    } else {
-                        break;
                     }
                 }
-            }
-        });
+            });
+        }
 
         if let Some(ref old) = old_value {
             if old.expire_at.is_some() {
                 self.expiration.cancel_expiration(key);
             }
-            rt.block_on(self.memory.remove_memory(key, old));
+            if memory_enabled {
+                rt.block_on(self.memory.remove_memory(key, old));
+            }
         }
 
         self.data.insert(key.to_string(), stored);
@@ -112,11 +118,13 @@ impl StorageEngine {
             self.expiration.schedule_expiration(key.to_string(), at);
         }
         
-        rt.block_on(async {
-            if let Some(new_value) = self.data.get(key) {
-                self.memory.add_memory(key, &new_value).await;
-            }
-        });
+        if memory_enabled {
+            rt.block_on(async {
+                if let Some(new_value) = self.data.get(key) {
+                    self.memory.add_memory(key, &new_value).await;
+                }
+            });
+        }
     }
 
     pub fn get(&self, key: &str) -> Option<StoredValue> {
@@ -124,7 +132,9 @@ impl StorageEngine {
         
         if value.is_some() {
             let rt = tokio::runtime::Handle::current();
-            rt.block_on(self.memory.record_read(key));
+            if rt.block_on(self.memory.is_enabled()) {
+                rt.block_on(self.memory.record_read(key));
+            }
         }
         
         value
@@ -133,7 +143,9 @@ impl StorageEngine {
     pub fn remove(&self, key: &str) -> bool {
         if let Some(old) = self.data.get(key) {
             let rt = tokio::runtime::Handle::current();
-            rt.block_on(self.memory.remove_memory(key, &old));
+            if rt.block_on(self.memory.is_enabled()) {
+                rt.block_on(self.memory.remove_memory(key, &old));
+            }
         }
         
         self.expiration.cancel_expiration(key);

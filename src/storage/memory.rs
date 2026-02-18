@@ -50,6 +50,11 @@ impl MemoryTracker {
         self.total_memory.load(Ordering::Relaxed)
     }
 
+    pub async fn is_enabled(&self) -> bool {
+        let config = self.config.read().await;
+        config.maxmemory.is_some()
+    }
+
     pub async fn add_memory(&self, key: &str, value: &StoredValue) -> usize {
         let size = value.data.estimated_size() + key.len() + KEY_OVERHEAD;
         self.total_memory.fetch_add(size, Ordering::Relaxed);
