@@ -50,6 +50,9 @@ jobs:
             pr-benchmarks.json
             pr-benchmarks.txt
 
+      - name: Clean build environment
+        run: cargo clean
+
       - name: Checkout main branch
         run: |
           git stash
@@ -237,7 +240,6 @@ jobs:
           PYTHON_SCRIPT
           
           python3 compare_benchmarks.py
-        continue-on-error: true
 
       - name: Comment PR
         uses: actions/github-script@v7
