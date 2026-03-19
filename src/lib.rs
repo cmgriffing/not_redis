@@ -48,9 +48,11 @@
 
 #![warn(missing_docs)]
 
+use arc_swap::ArcSwap;
 use dashmap::DashMap;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::{BTreeMap, VecDeque};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use thiserror::Error;
@@ -201,8 +203,9 @@ impl ExpirationManager {
 /// and supports key expiration with a background sweeper task.
 #[derive(Clone)]
 pub struct StorageEngine {
-    data: Arc<DashMap<String, StoredValue>>,
+    data: Arc<ArcSwap<DashMap<String, StoredValue>>>,
     expiration: ExpirationManager,
+    high_water_mark: Arc<AtomicUsize>,
 }
 
 #[allow(missing_docs)]
@@ -213,8 +216,9 @@ impl StorageEngine {
     /// by the background task when started.
     pub fn new() -> Self {
         Self {
-            data: Arc::new(DashMap::new()),
+            data: Arc::new(ArcSwap::from_pointee(DashMap::new())),
             expiration: ExpirationManager::new(100),
+            high_water_mark: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -236,11 +240,12 @@ impl StorageEngine {
                     .filter(|(t, _)| **t <= now)
                     .map(|(t, keys)| (*t, keys.iter().cloned().collect()))
                     .collect();
+                let current_data = data.load();
                 for (t, keys) in expired {
                     e.remove(&t);
                     for key in keys {
                         expiration.cancel(&key);
-                        data.remove(&key);
+                        current_data.remove(&key);
                     }
                 }
             }
@@ -254,7 +259,7 @@ impl StorageEngine {
     /// * `value` - The data to store
     /// * `expire_at` - Optional expiration time
     pub fn set(&self, key: &str, value: RedisData, expire_at: Option<Instant>) {
-        if let Some(old) = self.data.get(key) {
+        if let Some(old) = self.data.load().get(key) {
             if old.expire_at.is_some() {
                 self.expiration.cancel(key);
             }
@@ -263,17 +268,20 @@ impl StorageEngine {
             data: value,
             expire_at,
         };
-        self.data.insert(key.to_string(), stored);
+        self.data.load().insert(key.to_string(), stored);
         if let Some(at) = expire_at {
             self.expiration.schedule(key.to_string(), at);
         }
+        // Update high-water mark if current size exceeds it
+        let current_len = self.data.load().len();
+        self.high_water_mark.fetch_max(current_len, Ordering::Relaxed);
     }
 
     /// Gets a value from the storage engine by key.
     ///
     /// Returns the stored value if the key exists and has not expired.
     pub fn get(&self, key: &str) -> Option<StoredValue> {
-        self.data.get(key).map(|v| v.clone())
+        self.data.load().get(key).map(|v| v.clone())
     }
 
     /// Removes a key from the storage engine.
@@ -282,7 +290,33 @@ impl StorageEngine {
     /// Also removes any scheduled expiration for the key.
     pub fn remove(&self, key: &str) -> bool {
         self.expiration.cancel(key);
-        self.data.remove(key).is_some()
+        let removed = self.data.load().remove(key).is_some();
+        if removed {
+            self.maybe_compact();
+        }
+        removed
+    }
+
+    /// Compacts the storage engine by shrinking the DashMap's internal allocations.
+    ///
+    /// This reclaims memory from removed entries by shrinking each shard's
+    /// backing storage to fit only the current entries. The high-water mark
+    /// is reset to the current number of entries.
+    pub fn compact(&self) {
+        self.data.load().shrink_to_fit();
+        self.high_water_mark
+            .store(self.data.load().len(), Ordering::Relaxed);
+    }
+
+    fn maybe_compact(&self) {
+        let hwm = self.high_water_mark.load(Ordering::Relaxed);
+        if hwm == 0 {
+            return;
+        }
+        let current_len = self.data.load().len();
+        if current_len * 4 < hwm {
+            self.compact();
+        }
     }
 
     /// Checks if a key exists in the storage engine.
@@ -290,25 +324,26 @@ impl StorageEngine {
     /// Returns `true` if the key exists, `false` otherwise.
     /// Note: This does not check if the key has expired.
     pub fn exists(&self, key: &str) -> bool {
-        self.data.contains_key(key)
+        self.data.load().contains_key(key)
     }
 
     /// Returns the number of keys in the storage engine.
     pub fn len(&self) -> usize {
-        self.data.len()
+        self.data.load().len()
     }
 
     /// Returns `true` if the storage engine contains no keys.
     pub fn is_empty(&self) -> bool {
-        self.data.is_empty()
+        self.data.load().is_empty()
     }
 
     /// Clears all data from the storage engine.
     ///
     /// This removes all keys and their values, and cancels all scheduled expirations.
     pub fn flush(&self) {
-        self.data.clear();
+        self.data.store(Arc::new(DashMap::new()));
         self.expiration.clear();
+        self.high_water_mark.store(0, Ordering::Relaxed);
     }
 
     /// Sets an expiration time on an existing key.
@@ -319,7 +354,7 @@ impl StorageEngine {
     ///
     /// Returns `true` if the key exists and expiration was set, `false` otherwise.
     pub fn set_expiry(&self, key: &str, dur: Duration) -> bool {
-        if let Some(mut e) = self.data.get_mut(key) {
+        if let Some(mut e) = self.data.load().get_mut(key) {
             let at = Instant::now() + dur;
             e.expire_at = Some(at);
             self.expiration.schedule(key.to_string(), at);
@@ -332,7 +367,7 @@ impl StorageEngine {
     ///
     /// Returns `true` if the key existed and expiration was removed, `false` otherwise.
     pub fn persist(&self, key: &str) -> bool {
-        if let Some(mut e) = self.data.get_mut(key) {
+        if let Some(mut e) = self.data.load().get_mut(key) {
             e.expire_at = None;
             self.expiration.cancel(key);
             return true;
@@ -345,7 +380,7 @@ impl StorageEngine {
     /// Returns `Some(Duration)` if the key has an expiration,
     /// or `None` if the key does not exist or has no expiration.
     pub fn ttl(&self, key: &str) -> Option<Duration> {
-        self.data.get(key).and_then(|e| {
+        self.data.load().get(key).and_then(|e| {
             e.expire_at
                 .map(|at| at.saturating_duration_since(Instant::now()))
         })
@@ -358,7 +393,7 @@ impl StorageEngine {
     /// - `-2` if the key does not exist
     /// - A non-negative value representing seconds until expiration
     pub fn ttl_query(&self, key: &str) -> i64 {
-        self.data.get(key).map_or(-2i64, |e| match e.expire_at {
+        self.data.load().get(key).map_or(-2i64, |e| match e.expire_at {
             Some(at) => at.saturating_duration_since(Instant::now()).as_secs() as i64,
             None => -1i64,
         })
@@ -385,7 +420,7 @@ impl StorageEngine {
 
         let entry = (new_id.clone(), values);
 
-        if let Some(mut stored) = self.data.get_mut(key) {
+        if let Some(mut stored) = self.data.load().get_mut(key) {
             match &mut stored.data {
                 RedisData::Stream(entries) => {
                     entries.push(entry);
@@ -404,7 +439,7 @@ impl StorageEngine {
     ///
     /// Returns the length if the key exists and is a stream, None otherwise.
     pub fn xlen(&self, key: &str) -> Option<usize> {
-        self.data.get(key).map(|stored| match &stored.data {
+        self.data.load().get(key).map(|stored| match &stored.data {
             RedisData::Stream(entries) => entries.len(),
             _ => 0,
         })
@@ -419,7 +454,7 @@ impl StorageEngine {
     ///
     /// Returns the number of entries removed, or None if key is not a stream.
     pub fn xtrim(&self, key: &str, maxlen: usize, approximate: bool) -> Option<usize> {
-        if let Some(mut stored) = self.data.get_mut(key) {
+        if let Some(mut stored) = self.data.load().get_mut(key) {
             match &mut stored.data {
                 RedisData::Stream(entries) => {
                     let original_len = entries.len();
@@ -430,6 +465,7 @@ impl StorageEngine {
                             maxlen
                         };
                         entries.drain(0..entries.len().saturating_sub(keep));
+                        entries.shrink_to_fit();
                     }
                     return Some(original_len.saturating_sub(entries.len()));
                 }
@@ -447,11 +483,12 @@ impl StorageEngine {
     ///
     /// Returns the number of entries deleted, or None if key is not a stream.
     pub fn xdel(&self, key: &str, entry_ids: Vec<&[u8]>) -> Option<usize> {
-        if let Some(mut stored) = self.data.get_mut(key) {
+        if let Some(mut stored) = self.data.load().get_mut(key) {
             match &mut stored.data {
                 RedisData::Stream(entries) => {
                     let original_len = entries.len();
                     entries.retain(|(id, _)| !entry_ids.contains(&id.as_slice()));
+                    entries.shrink_to_fit();
                     return Some(original_len.saturating_sub(entries.len()));
                 }
                 _ => return None,
@@ -476,7 +513,7 @@ impl StorageEngine {
         end: &[u8],
         count: Option<usize>,
     ) -> Option<Vec<StreamEntry>> {
-        self.data.get(key).map(|stored| match &stored.data {
+        self.data.load().get(key).map(|stored| match &stored.data {
             RedisData::Stream(entries) => {
                 let mut result: Vec<_> = entries
                     .iter()
@@ -1310,5 +1347,189 @@ impl Client {
 impl Default for Client {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_xtrim_shrinks_vec_capacity() {
+        let engine = StorageEngine::new();
+
+        // Add many entries to build up Vec capacity
+        for i in 0..100 {
+            let id = format!("{}-0", i);
+            engine.xadd(
+                "stream",
+                Some(id.as_bytes()),
+                vec![(b"k".to_vec(), b"v".to_vec())],
+            );
+        }
+
+        // Verify we have 100 entries
+        assert_eq!(engine.xlen("stream"), Some(100));
+
+        // Get capacity before trim
+        let capacity_before = match &engine.data.load().get("stream").unwrap().data {
+            RedisData::Stream(entries) => entries.capacity(),
+            _ => panic!("expected stream"),
+        };
+
+        // Trim to keep only 2 entries
+        let removed = engine.xtrim("stream", 2, false);
+        assert_eq!(removed, Some(98));
+        assert_eq!(engine.xlen("stream"), Some(2));
+
+        // Verify capacity shrunk
+        let capacity_after = match &engine.data.load().get("stream").unwrap().data {
+            RedisData::Stream(entries) => entries.capacity(),
+            _ => panic!("expected stream"),
+        };
+
+        assert!(
+            capacity_after < capacity_before,
+            "capacity should shrink after trim: before={}, after={}",
+            capacity_before,
+            capacity_after
+        );
+    }
+
+    #[test]
+    fn test_xdel_shrinks_vec_capacity() {
+        let engine = StorageEngine::new();
+
+        // Add many entries
+        let mut ids = Vec::new();
+        for i in 0..100 {
+            let id = format!("{}-0", i);
+            engine.xadd(
+                "stream",
+                Some(id.as_bytes()),
+                vec![(b"k".to_vec(), b"v".to_vec())],
+            );
+            ids.push(id);
+        }
+
+        // Get capacity before delete
+        let capacity_before = match &engine.data.load().get("stream").unwrap().data {
+            RedisData::Stream(entries) => entries.capacity(),
+            _ => panic!("expected stream"),
+        };
+
+        // Delete most entries (keep only the last 2)
+        let to_delete: Vec<&[u8]> = ids[..98].iter().map(|s| s.as_bytes()).collect();
+        let removed = engine.xdel("stream", to_delete);
+        assert_eq!(removed, Some(98));
+
+        // Verify capacity shrunk
+        let capacity_after = match &engine.data.load().get("stream").unwrap().data {
+            RedisData::Stream(entries) => entries.capacity(),
+            _ => panic!("expected stream"),
+        };
+
+        assert!(
+            capacity_after < capacity_before,
+            "capacity should shrink after xdel: before={}, after={}",
+            capacity_before,
+            capacity_after
+        );
+    }
+
+    #[test]
+    fn test_compact_preserves_data() {
+        let engine = StorageEngine::new();
+        engine.set("key1", RedisData::String(b"val1".to_vec()), None);
+        engine.set("key2", RedisData::String(b"val2".to_vec()), None);
+
+        engine.compact();
+
+        assert_eq!(engine.len(), 2);
+        assert!(engine.exists("key1"));
+        assert!(engine.exists("key2"));
+    }
+
+    #[test]
+    fn test_compact_resets_high_water_mark() {
+        let engine = StorageEngine::new();
+        for i in 0..100 {
+            engine.set(
+                &format!("key{}", i),
+                RedisData::String(b"val".to_vec()),
+                None,
+            );
+        }
+        assert_eq!(engine.high_water_mark.load(Ordering::Relaxed), 100);
+
+        // Remove some keys without triggering auto-compact (50 >= 25% of 100)
+        for i in 50..100 {
+            engine.remove(&format!("key{}", i));
+        }
+        assert_eq!(engine.len(), 50);
+
+        // Manual compact should reset high-water mark
+        engine.compact();
+        assert_eq!(engine.high_water_mark.load(Ordering::Relaxed), 50);
+    }
+
+    #[test]
+    fn test_auto_compaction_on_remove() {
+        let engine = StorageEngine::new();
+        for i in 0..100 {
+            engine.set(
+                &format!("key{}", i),
+                RedisData::String(b"val".to_vec()),
+                None,
+            );
+        }
+        assert_eq!(engine.high_water_mark.load(Ordering::Relaxed), 100);
+
+        // Remove keys until len < 25% of high-water mark (below 25)
+        for i in 0..76 {
+            engine.remove(&format!("key{}", i));
+        }
+
+        // After auto-compaction triggered, high-water mark should be reset
+        assert_eq!(engine.len(), 24);
+        assert_eq!(engine.high_water_mark.load(Ordering::Relaxed), 24);
+    }
+
+    #[test]
+    fn test_no_auto_compaction_above_threshold() {
+        let engine = StorageEngine::new();
+        for i in 0..100 {
+            engine.set(
+                &format!("key{}", i),
+                RedisData::String(b"val".to_vec()),
+                None,
+            );
+        }
+
+        // Remove only 50 keys — 50 remaining is >= 25% of 100
+        for i in 0..50 {
+            engine.remove(&format!("key{}", i));
+        }
+
+        // High-water mark should NOT have been reset
+        assert_eq!(engine.len(), 50);
+        assert_eq!(engine.high_water_mark.load(Ordering::Relaxed), 100);
+    }
+
+    #[test]
+    fn test_flush_resets_high_water_mark() {
+        let engine = StorageEngine::new();
+        for i in 0..50 {
+            engine.set(
+                &format!("key{}", i),
+                RedisData::String(b"val".to_vec()),
+                None,
+            );
+        }
+        assert_eq!(engine.high_water_mark.load(Ordering::Relaxed), 50);
+
+        engine.flush();
+        assert_eq!(engine.high_water_mark.load(Ordering::Relaxed), 0);
+        assert_eq!(engine.len(), 0);
     }
 }
