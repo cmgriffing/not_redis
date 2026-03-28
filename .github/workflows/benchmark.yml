@@ -6,6 +6,17 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  BENCH_TARGETS: >-
+    bench_string
+    bench_hash
+    bench_list
+    bench_set
+    bench_concurrency_string
+    bench_concurrency_hash
+    bench_concurrency_mixed
+    bench_concurrency_list
+    bench_concurrency_contention
+    bench_throughput
 
 jobs:
   benchmark:
@@ -38,17 +49,17 @@ jobs:
 
       - name: Run PR benchmarks
         run: |
-          cargo bench --bench benchmarks -- --message-format=json > pr-benchmarks.json 2>&1 || true
-          # Also save the human-readable output
-          cargo bench --bench benchmarks 2>&1 | tee pr-benchmarks.txt || true
+          mkdir -p pr-results
+          for target in $BENCH_TARGETS; do
+            echo "=== Running PR benchmark: $target ==="
+            cargo bench --bench "$target" 2>&1 | tee "pr-results/${target}.txt" || true
+          done
 
       - name: Save PR benchmark results
         uses: actions/upload-artifact@v4
         with:
           name: pr-benchmarks
-          path: |
-            pr-benchmarks.json
-            pr-benchmarks.txt
+          path: pr-results/
 
       - name: Clean build environment
         run: cargo clean
@@ -63,17 +74,17 @@ jobs:
 
       - name: Run main benchmarks
         run: |
-          cargo bench --bench benchmarks -- --message-format=json > main-benchmarks.json 2>&1 || true
-          # Also save the human-readable output
-          cargo bench --bench benchmarks 2>&1 | tee main-benchmarks.txt || true
+          mkdir -p main-results
+          for target in $BENCH_TARGETS; do
+            echo "=== Running main benchmark: $target ==="
+            cargo bench --bench "$target" 2>&1 | tee "main-results/${target}.txt" || true
+          done
 
       - name: Save main benchmark results
         uses: actions/upload-artifact@v4
         with:
           name: main-benchmarks
-          path: |
-            main-benchmarks.json
-            main-benchmarks.txt
+          path: main-results/
 
       - name: Download PR benchmark results
         uses: actions/download-artifact@v4
@@ -86,18 +97,19 @@ jobs:
         run: |
           cat > compare_benchmarks.py << 'PYTHON_SCRIPT'
           import json
+          import os
           import re
           import sys
-          
+
           REGRESSION_THRESHOLD = 0.05  # 5%
-          
+
           def parse_benchmark_output(filepath):
               """Parse criterion benchmark output from file."""
               results = {}
               try:
                   with open(filepath, 'r') as f:
                       content = f.read()
-                  
+
                   # Try to parse as JSON first
                   for line in content.split('\n'):
                       line = line.strip()
@@ -115,7 +127,7 @@ jobs:
                                   }
                       except json.JSONDecodeError:
                           continue
-                  
+
                   # Fallback: parse text output for Criterion format
                   if not results:
                       pattern = r'(\S+)\s+time:\s+\[([^\]]+)\]\s+([^\s]+)\s+([^\s]+)\s+([^\s]+)'
@@ -136,12 +148,24 @@ jobs:
                               else:
                                   time = float(time_str)
                               results[name] = {'time': time, 'unit': 'ns'}
-                  
+
               except Exception as e:
                   print(f"Error parsing {filepath}: {e}")
-              
+
               return results
-          
+
+          def parse_results_dir(dirpath):
+              """Parse all benchmark result files in a directory."""
+              combined = {}
+              if not os.path.isdir(dirpath):
+                  return combined
+              for filename in sorted(os.listdir(dirpath)):
+                  if filename.endswith('.txt'):
+                      filepath = os.path.join(dirpath, filename)
+                      results = parse_benchmark_output(filepath)
+                      combined.update(results)
+              return combined
+
           def format_time(time_ns):
               """Format time in appropriate units."""
               if time_ns < 1000:
@@ -152,39 +176,39 @@ jobs:
                   return f"{time_ns/1000000:.2f} ms"
               else:
                   return f"{time_ns/1000000000:.2f} s"
-          
+
           def main():
-              main_results = parse_benchmark_output('main-benchmarks.txt')
-              pr_results = parse_benchmark_output('pr-results/pr-benchmarks.txt')
-              
+              main_results = parse_results_dir('main-results')
+              pr_results = parse_results_dir('pr-results')
+
               if not main_results or not pr_results:
                   print("::error::Failed to parse benchmark results")
                   print(f"Main results: {len(main_results)} benchmarks")
                   print(f"PR results: {len(pr_results)} benchmarks")
                   sys.exit(1)
-              
+
               markdown = "## 📊 Performance Benchmark Results\n\n"
               markdown += "| Benchmark | Main | PR | Change | Status |\n"
               markdown += "|-----------|------|-----|--------|--------|\n"
-              
+
               regressions = []
               improvements = []
-              
+
               all_benchmarks = set(main_results.keys()) | set(pr_results.keys())
-              
+
               for name in sorted(all_benchmarks):
                   main_time = main_results.get(name, {}).get('time', 0)
                   pr_time = pr_results.get(name, {}).get('time', 0)
-                  
+
                   if main_time == 0 or pr_time == 0:
                       continue
-                  
+
                   change = (pr_time - main_time) / main_time
                   change_pct = change * 100
-                  
+
                   main_formatted = format_time(main_time)
                   pr_formatted = format_time(pr_time)
-                  
+
                   if change > REGRESSION_THRESHOLD:
                       status = "🔴 Regression"
                       regressions.append((name, change))
@@ -193,52 +217,51 @@ jobs:
                       improvements.append((name, -change))
                   else:
                       status = "⚪ Neutral"
-                  
+
                   change_str = f"{change_pct:+.2f}%"
                   markdown += f"| `{name}` | {main_formatted} | {pr_formatted} | {change_str} | {status} |\n"
-              
+
               markdown += "\n### Summary\n\n"
               markdown += f"- **Regressions (>5% slower)**: {len(regressions)}\n"
               markdown += f"- **Improvements (>5% faster)**: {len(improvements)}\n"
               markdown += f"- **Neutral (within 5%)**: {len(all_benchmarks) - len(regressions) - len(improvements)}\n"
-              
+
               if regressions:
                   markdown += "\n### ⚠️ Performance Regressions Detected\n\n"
                   for name, change in sorted(regressions, key=lambda x: x[1], reverse=True):
                       markdown += f"- `{name}`: **+{change*100:.2f}%** slower\n"
-              
+
               if improvements:
                   markdown += "\n### 🎉 Performance Improvements\n\n"
                   for name, change in sorted(improvements, key=lambda x: x[1], reverse=True):
                       markdown += f"- `{name}`: **{change*100:.2f}%** faster\n"
-              
+
               markdown += "\n---\n*Benchmarks run on same GitHub Actions runner instance*"
-              
+
               # Write to file for GitHub Actions
               with open('benchmark-comment.md', 'w') as f:
                   f.write(markdown)
-              
+
               # Also print to console
               print(markdown)
-              
+
               # Set output for GitHub Actions
               with open(os.environ.get('GITHUB_OUTPUT', '/dev/null'), 'a') as f:
                   f.write(f"has_regressions={'true' if regressions else 'false'}\n")
                   f.write(f"regression_count={len(regressions)}\n")
                   f.write(f"improvement_count={len(improvements)}\n")
-              
+
               if regressions:
                   print(f"\n::error::{len(regressions)} performance regression(s) detected!")
                   sys.exit(1)
               else:
                   print("\n::notice::No performance regressions detected")
                   sys.exit(0)
-          
+
           if __name__ == "__main__":
-              import os
               main()
           PYTHON_SCRIPT
-          
+
           python3 compare_benchmarks.py
 
       - name: Comment PR
@@ -249,30 +272,30 @@ jobs:
           script: |
             const fs = require('fs');
             const path = 'benchmark-comment.md';
-            
+
             let body;
             if (fs.existsSync(path)) {
               body = fs.readFileSync(path, 'utf8');
             } else {
               body = `## 📊 Performance Benchmark Results
-              
+
               ❌ Failed to generate benchmark comparison. Check the workflow logs for details.
-              
+
               [View workflow logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})`;
             }
-            
+
             // Find existing comment
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number
             });
-            
-            const botComment = comments.find(comment => 
-              comment.user.type === 'Bot' && 
+
+            const botComment = comments.find(comment =>
+              comment.user.type === 'Bot' &&
               comment.body.includes('📊 Performance Benchmark Results')
             );
-            
+
             if (botComment) {
               // Update existing comment
               await github.rest.issues.updateComment({

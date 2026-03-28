@@ -29,3 +29,43 @@ harness = false
 [[bench]]
 name = "redis_baseline"
 harness = false
+
+[[bench]]
+name = "bench_string"
+harness = false
+
+[[bench]]
+name = "bench_hash"
+harness = false
+
+[[bench]]
+name = "bench_list"
+harness = false
+
+[[bench]]
+name = "bench_set"
+harness = false
+
+[[bench]]
+name = "bench_concurrency_string"
+harness = false
+
+[[bench]]
+name = "bench_concurrency_hash"
+harness = false
+
+[[bench]]
+name = "bench_concurrency_mixed"
+harness = false
+
+[[bench]]
+name = "bench_concurrency_list"
+harness = false
+
+[[bench]]
+name = "bench_concurrency_contention"
+harness = false
+
+[[bench]]
+name = "bench_throughput"
+harness = false
