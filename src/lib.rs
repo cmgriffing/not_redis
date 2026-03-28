@@ -51,6 +51,7 @@
 
 use dashmap::DashMap;
 use rustc_hash::{FxHashMap, FxHashSet};
+use smallvec::smallvec;
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -587,62 +588,62 @@ impl Default for StorageEngine {
 /// - `Option<T>`: Converts `None` to null, `Some` to the inner value
 #[allow(missing_docs)]
 pub trait ToRedisArgs {
-    fn to_redis_args(&self) -> Vec<Value>;
+    fn to_redis_args(&self) -> smallvec::SmallVec<[Value; 1]>;
 }
 
 impl ToRedisArgs for String {
-    fn to_redis_args(&self) -> Vec<Value> {
-        vec![Value::String(self.as_bytes().to_vec())]
+    fn to_redis_args(&self) -> smallvec::SmallVec<[Value; 1]> {
+        smallvec![Value::String(self.as_bytes().to_vec())]
     }
 }
 
 impl ToRedisArgs for &str {
-    fn to_redis_args(&self) -> Vec<Value> {
-        vec![Value::String(self.as_bytes().to_vec())]
+    fn to_redis_args(&self) -> smallvec::SmallVec<[Value; 1]> {
+        smallvec![Value::String(self.as_bytes().to_vec())]
     }
 }
 
 impl ToRedisArgs for Vec<u8> {
-    fn to_redis_args(&self) -> Vec<Value> {
-        vec![Value::String(self.clone())]
+    fn to_redis_args(&self) -> smallvec::SmallVec<[Value; 1]> {
+        smallvec![Value::String(self.clone())]
     }
 }
 
 impl ToRedisArgs for i64 {
-    fn to_redis_args(&self) -> Vec<Value> {
-        vec![Value::Int(*self)]
+    fn to_redis_args(&self) -> smallvec::SmallVec<[Value; 1]> {
+        smallvec![Value::Int(*self)]
     }
 }
 
 impl ToRedisArgs for u64 {
-    fn to_redis_args(&self) -> Vec<Value> {
-        vec![Value::Int(*self as i64)]
+    fn to_redis_args(&self) -> smallvec::SmallVec<[Value; 1]> {
+        smallvec![Value::Int(*self as i64)]
     }
 }
 
 impl ToRedisArgs for isize {
-    fn to_redis_args(&self) -> Vec<Value> {
-        vec![Value::Int(*self as i64)]
+    fn to_redis_args(&self) -> smallvec::SmallVec<[Value; 1]> {
+        smallvec![Value::Int(*self as i64)]
     }
 }
 
 impl ToRedisArgs for usize {
-    fn to_redis_args(&self) -> Vec<Value> {
-        vec![Value::Int(*self as i64)]
+    fn to_redis_args(&self) -> smallvec::SmallVec<[Value; 1]> {
+        smallvec![Value::Int(*self as i64)]
     }
 }
 
 impl ToRedisArgs for bool {
-    fn to_redis_args(&self) -> Vec<Value> {
-        vec![Value::Bool(*self)]
+    fn to_redis_args(&self) -> smallvec::SmallVec<[Value; 1]> {
+        smallvec![Value::Bool(*self)]
     }
 }
 
 impl<T: ToRedisArgs> ToRedisArgs for Option<T> {
-    fn to_redis_args(&self) -> Vec<Value> {
+    fn to_redis_args(&self) -> smallvec::SmallVec<[Value; 1]> {
         match self {
             Some(v) => v.to_redis_args(),
-            None => vec![Value::Null],
+            None => smallvec![Value::Null],
         }
     }
 }

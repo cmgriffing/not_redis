@@ -538,6 +538,7 @@ dependencies = [
  "rand",
  "redis",
  "rustc-hash",
+ "smallvec",
  "thiserror",
  "tokio",
 ]
