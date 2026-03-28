@@ -130,24 +130,32 @@ jobs:
 
                   # Fallback: parse text output for Criterion format
                   if not results:
-                      pattern = r'(\S+)\s+time:\s+\[([^\]]+)\]\s+([^\s]+)\s+([^\s]+)\s+([^\s]+)'
+                      last_name = None
                       for line in content.split('\n'):
-                          match = re.search(pattern, line)
-                          if match:
-                              name = match.group(1)
-                              # Parse the median time
-                              time_str = match.group(3)
-                              if 'ns' in time_str:
-                                  time = float(time_str.replace('ns', ''))
-                              elif 'µs' in time_str or 'us' in time_str:
-                                  time = float(time_str.replace('µs', '').replace('us', '')) * 1000
-                              elif 'ms' in time_str:
-                                  time = float(time_str.replace('ms', '')) * 1000000
-                              elif 's' in time_str:
-                                  time = float(time_str.replace('s', '')) * 1000000000
-                              else:
-                                  time = float(time_str)
-                              results[name] = {'time': time, 'unit': 'ns'}
+                          stripped = line.strip()
+                          # Benchmark name line (alphanumeric with underscores/slashes, no spaces)
+                          if re.match(r'^[a-zA-Z0-9_/]+$', stripped) and '/' in stripped:
+                              last_name = stripped
+                          # Time line
+                          elif 'time:' in line and last_name:
+                              # Match: [VALUE unit VALUE unit VALUE unit]
+                              time_match = re.search(r'\[\s*(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s*\]', line)
+                              if time_match:
+                                  # Middle (median) value is group 3 (value) and group 4 (unit)
+                                  median_val = float(time_match.group(3))
+                                  median_unit = time_match.group(4)
+                                  if median_unit == 'ns':
+                                      time = median_val
+                                  elif median_unit in ('µs', 'us'):
+                                      time = median_val * 1000
+                                  elif median_unit == 'ms':
+                                      time = median_val * 1000000
+                                  elif median_unit == 's':
+                                      time = median_val * 1000000000
+                                  else:
+                                      time = median_val
+                                  results[last_name] = {'time': time, 'unit': 'ns'}
+                                  last_name = None
 
               except Exception as e:
                   print(f"Error parsing {filepath}: {e}")
