@@ -260,20 +260,33 @@ impl StorageEngine {
     /// * `expire_at` - Optional expiration time
     pub fn set(&self, key: impl Into<String>, value: RedisData, expire_at: Option<Instant>) {
         let key = key.into();
-        if let Some(old) = self.data.get(&key) {
-            if old.expire_at.is_some() {
-                self.expiration.cancel(&key);
+        // If expiration is set, we will need the key later to schedule.
+        // Clone it only if needed to avoid unnecessary allocation.
+        let key_for_expire = expire_at.as_ref().map(|_| key.clone());
+
+        match self.data.entry(key) {
+            dashmap::mapref::entry::Entry::Occupied(mut entry) => {
+                let old = entry.get().clone();
+                if old.expire_at.is_some() {
+                    self.expiration.cancel(entry.key());
+                }
+                entry.insert(StoredValue {
+                    data: Arc::new(value),
+                    expire_at,
+                });
+            }
+            dashmap::mapref::entry::Entry::Vacant(entry) => {
+                entry.insert(StoredValue {
+                    data: Arc::new(value),
+                    expire_at,
+                });
             }
         }
-        let stored = StoredValue {
-            data: Arc::new(value),
-            expire_at,
-        };
-        if let Some(at) = expire_at {
-            // Clone the key for expiration scheduling only when needed
-            self.expiration.schedule(key.clone(), at);
+
+        if let (Some(at), Some(key_expire)) = (expire_at, key_for_expire) {
+            self.expiration.schedule(key_expire, at);
         }
-        self.data.insert(key, stored);
+
         // Update high-water mark if current size exceeds it
         let current_len = self.data.len();
         self.high_water_mark.fetch_max(current_len, Ordering::Relaxed);
