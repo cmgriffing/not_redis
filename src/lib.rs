@@ -796,14 +796,13 @@ impl Client {
     /// Gets a value from the database.
     ///
     /// # Type Parameters
-    /// * `K` - The key type (must implement [`ToRedisArgs`])
+    /// * `K` - The key type (must be convertible to `String`)
     /// * `RV` - The return value type (must implement [`FromRedisValue`])
-    pub async fn get<K, RV>(&mut self, key: K) -> RedisResult<RV>
+    pub async fn get<K: Into<String>, RV>(&mut self, key: K) -> RedisResult<RV>
     where
-        K: ToRedisArgs,
         RV: FromRedisValue,
     {
-        let key_str = Self::key_to_string(&key);
+        let key_str = key.into();
         if let Some(val) = self.storage.get(&key_str) {
             if val.is_expired() {
                 self.storage.remove(&key_str);
@@ -821,14 +820,13 @@ impl Client {
     /// Sets a key-value pair in the database.
     ///
     /// # Type Parameters
-    /// * `K` - The key type
+    /// * `K` - The key type (must be convertible to `String`)
     /// * `V` - The value type
-    pub async fn set<K, V>(&mut self, key: K, value: V) -> RedisResult<()>
+    pub async fn set<K: Into<String>, V>(&mut self, key: K, value: V) -> RedisResult<()>
     where
-        K: ToRedisArgs,
         V: ToRedisArgs,
     {
-        let key_str = Self::key_to_string(&key);
+        let key_str = key.into();
         let val = Self::value_to_vec(&value);
         self.storage.set(key_str, RedisData::String(val), None);
         Ok(())
@@ -888,18 +886,17 @@ impl Client {
     /// Sets a field in a hash.
     ///
     /// # Type Parameters
-    /// * `K` - The hash key
+    /// * `K` - The hash key (must be convertible to `String`)
     /// * `F` - The field name
     /// * `V` - The field value
     ///
     /// Returns `1` if the field is new, `0` if the field was updated.
-    pub async fn hset<K, F, V>(&mut self, key: K, field: F, value: V) -> RedisResult<i64>
+    pub async fn hset<K: Into<String>, F, V>(&mut self, key: K, field: F, value: V) -> RedisResult<i64>
     where
-        K: ToRedisArgs,
         F: ToRedisArgs,
         V: ToRedisArgs,
     {
-        let key_str = Self::key_to_string(&key);
+        let key_str = key.into();
         let field_b = Self::value_to_vec(&field);
         let value_b = Self::value_to_vec(&value);
         let is_new = if let Some(mut stored) = self.storage.data.get_mut(&key_str) {
@@ -920,16 +917,15 @@ impl Client {
     /// Gets a field value from a hash.
     ///
     /// # Type Parameters
-    /// * `K` - The hash key
+    /// * `K` - The hash key (must be convertible to `String`)
     /// * `F` - The field name
     /// * `RV` - The return value type
-    pub async fn hget<K, F, RV>(&mut self, key: K, field: F) -> RedisResult<RV>
+    pub async fn hget<K: Into<String>, F, RV>(&mut self, key: K, field: F) -> RedisResult<RV>
     where
-        K: ToRedisArgs,
         F: ToRedisArgs,
         RV: FromRedisValue,
     {
-        let key_str = Self::key_to_string(&key);
+        let key_str = key.into();
         let field_b = Self::value_to_vec(&field);
         if let Some(stored) = self.storage.data.get(&key_str) {
             if stored.is_expired() {
@@ -1007,12 +1003,11 @@ impl Client {
     /// Pushes a value to the front (left) of a list.
     ///
     /// Returns the length of the list after the push.
-    pub async fn lpush<K, V>(&mut self, key: K, value: V) -> RedisResult<i64>
+    pub async fn lpush<K: Into<String>, V>(&mut self, key: K, value: V) -> RedisResult<i64>
     where
-        K: ToRedisArgs,
         V: ToRedisArgs,
     {
-        let key_str = Self::key_to_string(&key);
+        let key_str = key.into();
         let val_b = Self::value_to_vec(&value);
         let len = if let Some(mut stored) = self.storage.data.get_mut(&key_str) {
             let data_ref = Arc::make_mut(&mut stored.data);
@@ -1035,12 +1030,11 @@ impl Client {
     /// Pushes a value to the back (right) of a list.
     ///
     /// Returns the length of the list after the push.
-    pub async fn rpush<K, V>(&mut self, key: K, value: V) -> RedisResult<i64>
+    pub async fn rpush<K: Into<String>, V>(&mut self, key: K, value: V) -> RedisResult<i64>
     where
-        K: ToRedisArgs,
         V: ToRedisArgs,
     {
-        let key_str = Self::key_to_string(&key);
+        let key_str = key.into();
         let val_b = Self::value_to_vec(&value);
         let len = if let Some(mut stored) = self.storage.data.get_mut(&key_str) {
             let data_ref = Arc::make_mut(&mut stored.data);
@@ -1085,12 +1079,11 @@ impl Client {
     /// Adds one or more members to a set.
     ///
     /// Returns the number of members that were added to the set.
-    pub async fn sadd<K, V>(&mut self, key: K, member: V) -> RedisResult<i64>
+    pub async fn sadd<K: Into<String>, V>(&mut self, key: K, member: V) -> RedisResult<i64>
     where
-        K: ToRedisArgs,
         V: ToRedisArgs,
     {
-        let key_str = Self::key_to_string(&key);
+        let key_str = key.into();
         let member_b = Self::value_to_vec(&member);
         if let Some(mut stored) = self.storage.data.get_mut(&key_str) {
             let data_ref = Arc::make_mut(&mut stored.data);
