@@ -130,13 +130,20 @@ jobs:
 
                   # Fallback: parse text output for Criterion format
                   if not results:
-                      pattern = r'(\S+)\s+time:\s+\[([^\]]+)\]\s+([^\s]+)\s+([^\s]+)\s+([^\s]+)'
+                      prev_line = ''
+                      time_pattern = r'time:\s+\[([^\]]+)\]'
                       for line in content.split('\n'):
-                          match = re.search(pattern, line)
+                          line = line.strip()
+                          match = re.search(time_pattern, line)
                           if match:
-                              name = match.group(1)
-                              # Parse the median time
-                              time_str = match.group(3)
+                              name = prev_line.strip()
+                              if not name:
+                                  continue
+                              values_str = match.group(1)
+                              values = values_str.split()
+                              if len(values) < 2:
+                                  continue
+                              time_str = values[1]
                               if 'ns' in time_str:
                                   time = float(time_str.replace('ns', ''))
                               elif 'µs' in time_str or 'us' in time_str:
@@ -148,6 +155,8 @@ jobs:
                               else:
                                   time = float(time_str)
                               results[name] = {'time': time, 'unit': 'ns'}
+                          if line:
+                              prev_line = line
 
               except Exception as e:
                   print(f"Error parsing {filepath}: {e}")
