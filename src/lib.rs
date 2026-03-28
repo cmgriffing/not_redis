@@ -257,20 +257,22 @@ impl StorageEngine {
     /// * `key` - The key to store
     /// * `value` - The data to store
     /// * `expire_at` - Optional expiration time
-    pub fn set(&self, key: &str, value: RedisData, expire_at: Option<Instant>) {
-        if let Some(old) = self.data.get(key) {
+    pub fn set(&self, key: impl Into<String>, value: RedisData, expire_at: Option<Instant>) {
+        let key = key.into();
+        if let Some(old) = self.data.get(&key) {
             if old.expire_at.is_some() {
-                self.expiration.cancel(key);
+                self.expiration.cancel(&key);
             }
         }
         let stored = StoredValue {
             data: Arc::new(value),
             expire_at,
         };
-        self.data.insert(key.to_string(), stored);
         if let Some(at) = expire_at {
-            self.expiration.schedule(key.to_string(), at);
+            // Clone the key for expiration scheduling only when needed
+            self.expiration.schedule(key.clone(), at);
         }
+        self.data.insert(key, stored);
         // Update high-water mark if current size exceeds it
         let current_len = self.data.len();
         self.high_water_mark.fetch_max(current_len, Ordering::Relaxed);
@@ -814,7 +816,7 @@ impl Client {
     {
         let key_str = Self::key_to_string(&key);
         let val = Self::value_to_vec(&value);
-        self.storage.set(&key_str, RedisData::String(val), None);
+        self.storage.set(key_str, RedisData::String(val), None);
         Ok(())
     }
 
@@ -895,7 +897,7 @@ impl Client {
         } else {
             let mut h = FxHashMap::default();
             h.insert(field_b, value_b);
-            self.storage.set(&key_str, RedisData::Hash(h), None);
+            self.storage.set(key_str, RedisData::Hash(h), None);
             true
         };
         Ok(if is_new { 1 } else { 0 })
@@ -1010,7 +1012,7 @@ impl Client {
         } else {
             let mut l = VecDeque::new();
             l.push_front(val_b);
-            self.storage.set(&key_str, RedisData::List(l), None);
+            self.storage.set(key_str, RedisData::List(l), None);
             1
         };
         Ok(len)
@@ -1038,7 +1040,7 @@ impl Client {
         } else {
             let mut l = VecDeque::new();
             l.push_back(val_b);
-            self.storage.set(&key_str, RedisData::List(l), None);
+            self.storage.set(key_str, RedisData::List(l), None);
             1
         };
         Ok(len)
@@ -1088,7 +1090,7 @@ impl Client {
         } else {
             let mut s = FxHashSet::default();
             s.insert(member_b);
-            self.storage.set(&key_str, RedisData::Set(s), None);
+            self.storage.set(key_str, RedisData::Set(s), None);
             Ok(1)
         }
     }

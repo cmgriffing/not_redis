@@ -70,3 +70,7 @@ harness = false
 [[bench]]
 name = "bench_throughput"
 harness = false
+
+[[bench]]
+name = "autoresearch_metric"
+harness = false
