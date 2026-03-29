@@ -89,7 +89,7 @@ pub type RedisResult<T> = Result<T, RedisError>;
 pub enum Value {
     Null,
     Int(i64),
-    String(Vec<u8>),
+    String(SmallVec<[u8; 64]>),
     Array(Vec<Value>),
     Map(Vec<(Value, Value)>),
     Set(Vec<Value>),
@@ -99,17 +99,17 @@ pub enum Value {
 
 impl From<String> for Value {
     fn from(s: String) -> Self {
-        Value::String(s.into_bytes())
+        Value::String(SmallVec::from(s.as_bytes()))
     }
 }
 impl From<&str> for Value {
     fn from(s: &str) -> Self {
-        Value::String(s.as_bytes().to_vec())
+        Value::String(SmallVec::from(s.as_bytes()))
     }
 }
 impl From<Vec<u8>> for Value {
     fn from(b: Vec<u8>) -> Self {
-        Value::String(b)
+        Value::String(SmallVec::from(b))
     }
 }
 impl From<i64> for Value {
@@ -606,19 +606,19 @@ pub trait ToRedisArgs {
 
 impl ToRedisArgs for String {
     fn to_redis_args(&self) -> smallvec::SmallVec<[Value; 1]> {
-        smallvec![Value::String(self.as_bytes().to_vec())]
+        smallvec![Value::String(SmallVec::from(self.as_bytes()))]
     }
 }
 
 impl ToRedisArgs for &str {
     fn to_redis_args(&self) -> smallvec::SmallVec<[Value; 1]> {
-        smallvec![Value::String(self.as_bytes().to_vec())]
+        smallvec![Value::String(SmallVec::from(self.as_bytes()))]
     }
 }
 
 impl ToRedisArgs for Vec<u8> {
     fn to_redis_args(&self) -> smallvec::SmallVec<[Value; 1]> {
-        smallvec![Value::String(self.clone())]
+        smallvec![Value::String(SmallVec::from(self.as_slice()))]
     }
 }
 
@@ -683,7 +683,7 @@ pub trait FromRedisValue: Sized {
 impl FromRedisValue for String {
     fn from_redis_value(v: Value) -> RedisResult<Self> {
         match v {
-            Value::String(s) => String::from_utf8(s).map_err(|_| RedisError::ParseError),
+            Value::String(s) => String::from_utf8(s.into_vec()).map_err(|_| RedisError::ParseError),
             Value::Int(n) => Ok(n.to_string()),
             Value::Null => Ok(String::new()),
             _ => Err(RedisError::ParseError),
@@ -694,7 +694,7 @@ impl FromRedisValue for String {
 impl FromRedisValue for Vec<u8> {
     fn from_redis_value(v: Value) -> RedisResult<Self> {
         match v {
-            Value::String(s) => Ok(s),
+            Value::String(s) => Ok(s.into_vec()),
             _ => Err(RedisError::ParseError),
         }
     }
@@ -704,7 +704,7 @@ impl FromRedisValue for i64 {
     fn from_redis_value(v: Value) -> RedisResult<Self> {
         match v {
             Value::Int(n) => Ok(n),
-            Value::String(s) => String::from_utf8(s)
+            Value::String(s) => std::str::from_utf8(&s)
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .ok_or(RedisError::ParseError),
@@ -720,7 +720,7 @@ impl FromRedisValue for bool {
             Value::Bool(b) => Ok(b),
             Value::Int(n) => Ok(n != 0),
             Value::String(s) => {
-                let s_str = String::from_utf8(s).map_err(|_| RedisError::ParseError)?;
+                let s_str = std::str::from_utf8(&s).map_err(|_| RedisError::ParseError)?;
                 Ok(s_str == "1" || s_str.eq_ignore_ascii_case("true"))
             }
             Value::Null => Ok(false),
@@ -810,7 +810,7 @@ impl Client {
                 return FromRedisValue::from_redis_value(Value::Null);
             }
             match &*stored.data {
-                RedisData::String(s) => RV::from_redis_value(Value::String(s.to_vec())),
+                RedisData::String(s) => RV::from_redis_value(Value::String(s.clone())),
                 _ => Err(RedisError::WrongType),
             }
         } else {
@@ -898,19 +898,17 @@ impl Client {
         V: ToRedisArgs,
     {
         let key_str = key.into();
-        let field_b = Self::value_to_vec(&field);
-        let value_b = Self::value_to_vec(&value);
-        let field_small = SmallVec::from(field_b);
-        let value_small = SmallVec::from(value_b);
+        let field = Self::value_to_vec(&field);
+        let value = Self::value_to_vec(&value);
         let is_new = if let Some(mut stored) = self.storage.data.get_mut(&key_str) {
             let data_ref = Arc::make_mut(&mut stored.data);
             match data_ref {
-                RedisData::Hash(h) => h.insert(field_small, value_small).is_none(),
+                RedisData::Hash(h) => h.insert(field, value).is_none(),
                 _ => return Err(RedisError::WrongType),
             }
         } else {
             let mut h = FxHashMap::default();
-            h.insert(field_small, value_small);
+            h.insert(field, value);
             self.storage.set(key_str, RedisData::Hash(h), None);
             true
         };
@@ -929,8 +927,7 @@ impl Client {
         RV: FromRedisValue,
     {
         let key_str = key.into();
-        let field_b = Self::value_to_vec(&field);
-        let field_small = SmallVec::from(field_b);
+        let field = Self::value_to_vec(&field);
         if let Some(stored) = self.storage.data.get(&key_str) {
             if stored.is_expired() {
                 self.storage.remove(&key_str);
@@ -938,8 +935,8 @@ impl Client {
             }
             match &*stored.data {
                 RedisData::Hash(h) => {
-                    if let Some(v) = h.get(&field_small) {
-                        RV::from_redis_value(Value::String(v.to_vec()))
+                    if let Some(v) = h.get(&field) {
+                        RV::from_redis_value(Value::String(v.clone()))
                     } else {
                         FromRedisValue::from_redis_value(Value::Null)
                     }
@@ -969,8 +966,8 @@ impl Client {
                 RedisData::Hash(h) => {
                     let mut res = Vec::with_capacity(h.len() * 2);
                     for (k, v) in h.iter() {
-                        res.push(Value::String(k.to_vec()));
-                        res.push(Value::String(v.to_vec()));
+                        res.push(Value::String(k.clone()));
+                        res.push(Value::String(v.clone()));
                     }
                     FromRedisValue::from_redis_value(Value::Array(res))
                 }
@@ -990,13 +987,12 @@ impl Client {
         F: ToRedisArgs,
     {
         let key_str = Self::key_to_string(&key);
-        let field_b = Self::value_to_vec(&field);
-        let field_small = SmallVec::from(field_b);
+        let field = Self::value_to_vec(&field);
         if let Some(mut stored) = self.storage.data.get_mut(&key_str) {
             let data_ref = Arc::make_mut(&mut stored.data);
             match data_ref {
                 RedisData::Hash(h) => {
-                    let existed = h.remove(&field_small).is_some();
+                    let existed = h.remove(&field).is_some();
                     return Ok(if existed { 1 } else { 0 });
                 }
                 _ => return Err(RedisError::WrongType),
@@ -1018,14 +1014,14 @@ impl Client {
             let data_ref = Arc::make_mut(&mut stored.data);
             match data_ref {
                 RedisData::List(l) => {
-                    l.push_front(SmallVec::from(val_b));
+                    l.push_front(val_b);
                     l.len() as i64
                 }
                 _ => return Err(RedisError::WrongType),
             }
         } else {
             let mut l = VecDeque::new();
-            l.push_front(SmallVec::from(val_b));
+            l.push_front(val_b);
             self.storage.set(key_str, RedisData::List(l), None);
             1
         };
@@ -1045,14 +1041,14 @@ impl Client {
             let data_ref = Arc::make_mut(&mut stored.data);
             match data_ref {
                 RedisData::List(l) => {
-                    l.push_back(SmallVec::from(val_b));
+                    l.push_back(val_b);
                     l.len() as i64
                 }
                 _ => return Err(RedisError::WrongType),
             }
         } else {
             let mut l = VecDeque::new();
-            l.push_back(SmallVec::from(val_b));
+            l.push_back(val_b);
             self.storage.set(key_str, RedisData::List(l), None);
             1
         };
@@ -1089,20 +1085,19 @@ impl Client {
         V: ToRedisArgs,
     {
         let key_str = key.into();
-        let member_b = Self::value_to_vec(&member);
-        let member_small = SmallVec::from(member_b);
+        let member = Self::value_to_vec(&member);
         if let Some(mut stored) = self.storage.data.get_mut(&key_str) {
             let data_ref = Arc::make_mut(&mut stored.data);
             match data_ref {
                 RedisData::Set(s) => {
-                    let added = s.insert(member_small);
+                    let added = s.insert(member);
                     Ok(if added { 1 } else { 0 })
                 }
                 _ => return Err(RedisError::WrongType),
             }
         } else {
             let mut s = FxHashSet::default();
-            s.insert(member_small);
+            s.insert(member);
             self.storage.set(key_str, RedisData::Set(s), None);
             Ok(1)
         }
@@ -1122,7 +1117,7 @@ impl Client {
             }
             match &*stored.data {
                 RedisData::Set(s) => {
-                    let members: Vec<Value> = s.iter().map(|m| Value::String(m.to_vec())).collect();
+                    let members: Vec<Value> = s.iter().map(|m| Value::String(m.clone())).collect();
                     FromRedisValue::from_redis_value(Value::Array(members))
                 }
                 _ => Err(RedisError::WrongType),
@@ -1192,7 +1187,11 @@ impl Client {
         let entry_id_bytes = entry_id.map(|s| s.as_bytes().to_vec());
         let values: Vec<(Vec<u8>, Vec<u8>)> = values
             .into_iter()
-            .map(|(f, v)| (Self::value_to_vec(&f), Self::value_to_vec(&v)))
+            .map(|(f, v)| {
+                let f_bytes = Self::value_to_vec(&f);
+                let v_bytes = Self::value_to_vec(&v);
+                (f_bytes.into_vec(), v_bytes.into_vec())
+            })
             .collect();
 
         match self
@@ -1272,10 +1271,10 @@ impl Client {
                 let values: Vec<Value> = entries
                     .into_iter()
                     .map(|(id, fields)| {
-                        let mut arr = vec![Value::String(id)];
+                        let mut arr = vec![Value::String(SmallVec::from(id))];
                         for (field, value) in fields {
-                            arr.push(Value::String(field));
-                            arr.push(Value::String(value));
+                            arr.push(Value::String(SmallVec::from(field)));
+                            arr.push(Value::String(SmallVec::from(value)));
                         }
                         Value::Array(arr)
                     })
@@ -1314,10 +1313,10 @@ impl Client {
                 let values: Vec<Value> = entries
                     .into_iter()
                     .map(|(id, fields)| {
-                        let mut arr = vec![Value::String(id)];
+                        let mut arr = vec![Value::String(SmallVec::from(id))];
                         for (field, value) in fields {
-                            arr.push(Value::String(field));
-                            arr.push(Value::String(value));
+                            arr.push(Value::String(SmallVec::from(field)));
+                            arr.push(Value::String(SmallVec::from(value)));
                         }
                         Value::Array(arr)
                     })
@@ -1332,23 +1331,23 @@ impl Client {
         let bytes = Self::value_to_vec(key);
         // If the bytes are valid UTF-8, String::from_utf8 will take ownership of the Vec without copying.
         // If not valid (unlikely for keys), fall back to lossy conversion.
-        String::from_utf8(bytes).unwrap_or_else(|err| {
+        String::from_utf8(bytes.into_vec()).unwrap_or_else(|err| {
             let bytes = err.into_bytes();
             String::from_utf8_lossy(&bytes).to_string()
         })
     }
 
-    fn value_to_vec<V: ToRedisArgs>(v: &V) -> Vec<u8> {
+    fn value_to_vec<V: ToRedisArgs>(v: &V) -> SmallVec<[u8; 64]> {
         let args = v.to_redis_args();
         for arg in args {
             match arg {
                 Value::String(s) => return s,
-                Value::Int(n) => return n.to_string().into_bytes(),
-                Value::Bool(b) => return (if b { "1" } else { "0" }).to_string().into_bytes(),
+                Value::Int(n) => return SmallVec::from(n.to_string().as_bytes()),
+                Value::Bool(b) => return if b { SmallVec::from_slice(b"1") } else { SmallVec::from_slice(b"0") },
                 _ => {}
             }
         }
-        Vec::new()
+        SmallVec::new()
     }
 }
 
