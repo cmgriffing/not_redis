@@ -803,12 +803,13 @@ impl Client {
         RV: FromRedisValue,
     {
         let key_str = key.into();
-        if let Some(val) = self.storage.get(&key_str) {
-            if val.is_expired() {
+        if let Some(stored) = self.storage.data.get(&key_str) {
+            if stored.is_expired() {
+                drop(stored);
                 self.storage.remove(&key_str);
                 return FromRedisValue::from_redis_value(Value::Null);
             }
-            match &*val.data {
+            match &*stored.data {
                 RedisData::String(s) => RV::from_redis_value(Value::String(s.clone())),
                 _ => Err(RedisError::WrongType),
             }
