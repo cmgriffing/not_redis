@@ -1,1 +1,2 @@
 {"type":"config","name":"Optimize not_redis mixed workload throughput","metricName":"ops_per_sec","metricUnit":"ops/sec","bestDirection":"higher"}
+{"run":1,"commit":"bead574","metric":7111363,"metrics":{},"status":"keep","description":"Baseline measurement of mixed workload throughput","timestamp":1774746567179,"segment":0,"confidence":null,"iterationTokens":48,"asi":{"experiment":"baseline","workload":"mixed (SET 40%, GET 40%, HSET 10%, HGET 10%)","median_time_us":140.62}}
