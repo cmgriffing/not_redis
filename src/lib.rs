@@ -51,7 +51,7 @@
 
 use dashmap::DashMap;
 use rustc_hash::{FxHashMap, FxHashSet, FxBuildHasher};
-use smallvec::smallvec;
+use smallvec::{smallvec, SmallVec};
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -143,11 +143,11 @@ pub type StreamEntry = (Vec<u8>, Vec<(Vec<u8>, Vec<u8>)>);
 #[derive(Debug, Clone)]
 #[allow(missing_docs)]
 pub enum RedisData {
-    String(Vec<u8>),
-    List(VecDeque<Vec<u8>>),
-    Set(FxHashSet<Vec<u8>>),
-    Hash(FxHashMap<Vec<u8>, Vec<u8>>),
-    ZSet(BTreeMap<Vec<u8>, f64>),
+    String(SmallVec<[u8; 64]>),
+    List(VecDeque<SmallVec<[u8; 64]>>),
+    Set(FxHashSet<SmallVec<[u8; 64]>>),
+    Hash(FxHashMap<SmallVec<[u8; 64]>, SmallVec<[u8; 64]>>),
+    ZSet(BTreeMap<SmallVec<[u8; 64]>, f64>),
     Stream(Vec<StreamEntry>),
 }
 
@@ -810,7 +810,7 @@ impl Client {
                 return FromRedisValue::from_redis_value(Value::Null);
             }
             match &*stored.data {
-                RedisData::String(s) => RV::from_redis_value(Value::String(s.clone())),
+                RedisData::String(s) => RV::from_redis_value(Value::String(s.to_vec())),
                 _ => Err(RedisError::WrongType),
             }
         } else {
@@ -829,7 +829,7 @@ impl Client {
     {
         let key_str = key.into();
         let val = Self::value_to_vec(&value);
-        self.storage.set(key_str, RedisData::String(val), None);
+        self.storage.set(key_str, RedisData::String(SmallVec::from(val)), None);
         Ok(())
     }
 
@@ -900,15 +900,17 @@ impl Client {
         let key_str = key.into();
         let field_b = Self::value_to_vec(&field);
         let value_b = Self::value_to_vec(&value);
+        let field_small = SmallVec::from(field_b);
+        let value_small = SmallVec::from(value_b);
         let is_new = if let Some(mut stored) = self.storage.data.get_mut(&key_str) {
             let data_ref = Arc::make_mut(&mut stored.data);
             match data_ref {
-                RedisData::Hash(h) => h.insert(field_b, value_b).is_none(),
+                RedisData::Hash(h) => h.insert(field_small, value_small).is_none(),
                 _ => return Err(RedisError::WrongType),
             }
         } else {
             let mut h = FxHashMap::default();
-            h.insert(field_b, value_b);
+            h.insert(field_small, value_small);
             self.storage.set(key_str, RedisData::Hash(h), None);
             true
         };
@@ -928,6 +930,7 @@ impl Client {
     {
         let key_str = key.into();
         let field_b = Self::value_to_vec(&field);
+        let field_small = SmallVec::from(field_b);
         if let Some(stored) = self.storage.data.get(&key_str) {
             if stored.is_expired() {
                 self.storage.remove(&key_str);
@@ -935,8 +938,8 @@ impl Client {
             }
             match &*stored.data {
                 RedisData::Hash(h) => {
-                    if let Some(v) = h.get(&field_b) {
-                        RV::from_redis_value(Value::String(v.clone()))
+                    if let Some(v) = h.get(&field_small) {
+                        RV::from_redis_value(Value::String(v.to_vec()))
                     } else {
                         FromRedisValue::from_redis_value(Value::Null)
                     }
@@ -966,8 +969,8 @@ impl Client {
                 RedisData::Hash(h) => {
                     let mut res = Vec::with_capacity(h.len() * 2);
                     for (k, v) in h.iter() {
-                        res.push(Value::String(k.clone()));
-                        res.push(Value::String(v.clone()));
+                        res.push(Value::String(k.to_vec()));
+                        res.push(Value::String(v.to_vec()));
                     }
                     FromRedisValue::from_redis_value(Value::Array(res))
                 }
@@ -988,11 +991,12 @@ impl Client {
     {
         let key_str = Self::key_to_string(&key);
         let field_b = Self::value_to_vec(&field);
+        let field_small = SmallVec::from(field_b);
         if let Some(mut stored) = self.storage.data.get_mut(&key_str) {
             let data_ref = Arc::make_mut(&mut stored.data);
             match data_ref {
                 RedisData::Hash(h) => {
-                    let existed = h.remove(&field_b).is_some();
+                    let existed = h.remove(&field_small).is_some();
                     return Ok(if existed { 1 } else { 0 });
                 }
                 _ => return Err(RedisError::WrongType),
@@ -1014,14 +1018,14 @@ impl Client {
             let data_ref = Arc::make_mut(&mut stored.data);
             match data_ref {
                 RedisData::List(l) => {
-                    l.push_front(val_b);
+                    l.push_front(SmallVec::from(val_b));
                     l.len() as i64
                 }
                 _ => return Err(RedisError::WrongType),
             }
         } else {
             let mut l = VecDeque::new();
-            l.push_front(val_b);
+            l.push_front(SmallVec::from(val_b));
             self.storage.set(key_str, RedisData::List(l), None);
             1
         };
@@ -1041,14 +1045,14 @@ impl Client {
             let data_ref = Arc::make_mut(&mut stored.data);
             match data_ref {
                 RedisData::List(l) => {
-                    l.push_back(val_b);
+                    l.push_back(SmallVec::from(val_b));
                     l.len() as i64
                 }
                 _ => return Err(RedisError::WrongType),
             }
         } else {
             let mut l = VecDeque::new();
-            l.push_back(val_b);
+            l.push_back(SmallVec::from(val_b));
             self.storage.set(key_str, RedisData::List(l), None);
             1
         };
@@ -1086,18 +1090,19 @@ impl Client {
     {
         let key_str = key.into();
         let member_b = Self::value_to_vec(&member);
+        let member_small = SmallVec::from(member_b);
         if let Some(mut stored) = self.storage.data.get_mut(&key_str) {
             let data_ref = Arc::make_mut(&mut stored.data);
             match data_ref {
                 RedisData::Set(s) => {
-                    let added = s.insert(member_b);
+                    let added = s.insert(member_small);
                     Ok(if added { 1 } else { 0 })
                 }
                 _ => return Err(RedisError::WrongType),
             }
         } else {
             let mut s = FxHashSet::default();
-            s.insert(member_b);
+            s.insert(member_small);
             self.storage.set(key_str, RedisData::Set(s), None);
             Ok(1)
         }
@@ -1117,7 +1122,7 @@ impl Client {
             }
             match &*stored.data {
                 RedisData::Set(s) => {
-                    let members: Vec<Value> = s.iter().map(|m| Value::String(m.clone())).collect();
+                    let members: Vec<Value> = s.iter().map(|m| Value::String(m.to_vec())).collect();
                     FromRedisValue::from_redis_value(Value::Array(members))
                 }
                 _ => Err(RedisError::WrongType),
@@ -1443,8 +1448,8 @@ mod tests {
     #[test]
     fn test_compact_preserves_data() {
         let engine = StorageEngine::new();
-        engine.set("key1", RedisData::String(b"val1".to_vec()), None);
-        engine.set("key2", RedisData::String(b"val2".to_vec()), None);
+        engine.set("key1", RedisData::String(b"val1".to_vec().into()), None);
+        engine.set("key2", RedisData::String(b"val2".to_vec().into()), None);
 
         engine.compact();
 
@@ -1459,7 +1464,7 @@ mod tests {
         for i in 0..100 {
             engine.set(
                 &format!("key{}", i),
-                RedisData::String(b"val".to_vec()),
+                RedisData::String(b"val".to_vec().into()),
                 None,
             );
         }
@@ -1482,7 +1487,7 @@ mod tests {
         for i in 0..100 {
             engine.set(
                 &format!("key{}", i),
-                RedisData::String(b"val".to_vec()),
+                RedisData::String(b"val".to_vec().into()),
                 None,
             );
         }
@@ -1504,7 +1509,7 @@ mod tests {
         for i in 0..100 {
             engine.set(
                 &format!("key{}", i),
-                RedisData::String(b"val".to_vec()),
+                RedisData::String(b"val".to_vec().into()),
                 None,
             );
         }
@@ -1525,7 +1530,7 @@ mod tests {
         for i in 0..50 {
             engine.set(
                 &format!("key{}", i),
-                RedisData::String(b"val".to_vec()),
+                RedisData::String(b"val".to_vec().into()),
                 None,
             );
         }
