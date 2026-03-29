@@ -217,7 +217,7 @@ impl StorageEngine {
     /// by the background task when started.
     pub fn new() -> Self {
         Self {
-            data: Arc::new(DashMap::with_hasher(FxBuildHasher::default())),
+            data: Arc::new(DashMap::with_hasher(FxBuildHasher)),
             expiration: ExpirationManager::new(100),
             high_water_mark: Arc::new(AtomicUsize::new(0)),
         }
@@ -829,7 +829,7 @@ impl Client {
     {
         let key_str = key.into();
         let val = Self::value_to_vec(&value);
-        self.storage.set(key_str, RedisData::String(SmallVec::from(val)), None);
+        self.storage.set(key_str, RedisData::String(val), None);
         Ok(())
     }
 
