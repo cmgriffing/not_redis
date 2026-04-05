@@ -37,7 +37,7 @@ fn concurrent_string_set_different_keys(c: &mut Criterion) {
                             });
                         }
                         while set.join_next().await.is_some() {}
-                        let _ = storage.flush();
+                        storage.flush();
                     });
                 });
             },
@@ -72,7 +72,7 @@ fn concurrent_string_set_same_key(c: &mut Criterion) {
                             });
                         }
                         while set.join_next().await.is_some() {}
-                        let _ = storage.flush();
+                        storage.flush();
                     });
                 });
             },

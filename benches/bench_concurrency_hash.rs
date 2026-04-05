@@ -40,7 +40,7 @@ fn concurrent_hash_ops(c: &mut Criterion) {
                             });
                         }
                         while set.join_next().await.is_some() {}
-                        let _ = storage.flush();
+                        storage.flush();
                     });
                 });
             },

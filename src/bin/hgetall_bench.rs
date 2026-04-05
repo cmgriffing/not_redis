@@ -19,14 +19,20 @@ async fn main() {
 
     // Warm-up
     for _ in 0..1000 {
-        let _ = client.hgetall::<_, Vec<String>>("bench_hash").await.unwrap();
+        let _ = client
+            .hgetall::<_, Vec<String>>("bench_hash")
+            .await
+            .unwrap();
     }
 
     // Measure hgetall
     let iterations = 10_000;
     let start = Instant::now();
     for _ in 0..iterations {
-        let _ = client.hgetall::<_, Vec<String>>("bench_hash").await.unwrap();
+        let _ = client
+            .hgetall::<_, Vec<String>>("bench_hash")
+            .await
+            .unwrap();
     }
     let elapsed = start.elapsed();
 
@@ -41,7 +47,9 @@ async fn main() {
     let hset_iterations = 10_000;
     let hset_start = Instant::now();
     for i in 0..hset_iterations {
-        let _ = client2.hset("bench_hash", format!("field{}", i), "newvalue").await;
+        let _ = client2
+            .hset("bench_hash", format!("field{}", i), "newvalue")
+            .await;
     }
     let hset_elapsed = hset_start.elapsed();
     let hset_ns = hset_elapsed.as_nanos() / hset_iterations as u128;

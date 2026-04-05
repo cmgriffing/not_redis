@@ -238,10 +238,7 @@ impl StorageEngine {
                 let now = Instant::now();
                 let keys_to_remove: Vec<String> = {
                     let mut e = expiration.expirations.lock().unwrap();
-                    let expired_times: Vec<Instant> = e
-                        .range(..=now)
-                        .map(|(t, _)| *t)
-                        .collect();
+                    let expired_times: Vec<Instant> = e.range(..=now).map(|(t, _)| *t).collect();
                     let mut keys = Vec::new();
                     for t in expired_times {
                         if let Some(slot_keys) = e.remove(&t) {
@@ -295,7 +292,8 @@ impl StorageEngine {
 
         // Update high-water mark if current size exceeds it
         let current_len = self.data.len();
-        self.high_water_mark.fetch_max(current_len, Ordering::Relaxed);
+        self.high_water_mark
+            .fetch_max(current_len, Ordering::Relaxed);
     }
 
     /// Gets a value from the storage engine by key.
@@ -890,10 +888,9 @@ impl Client {
             // Redis deletes the key when given a negative TTL
             return Ok(self.storage.remove(&key_str));
         }
-        Ok(self.storage.set_expiry(
-            &key_str,
-            Duration::from_secs(seconds as u64),
-        ))
+        Ok(self
+            .storage
+            .set_expiry(&key_str, Duration::from_secs(seconds as u64)))
     }
 
     /// Gets the time-to-live of a key.
@@ -917,7 +914,12 @@ impl Client {
     /// * `V` - The field value
     ///
     /// Returns `1` if the field is new, `0` if the field was updated.
-    pub async fn hset<K: Into<String>, F, V>(&mut self, key: K, field: F, value: V) -> RedisResult<i64>
+    pub async fn hset<K: Into<String>, F, V>(
+        &mut self,
+        key: K,
+        field: F,
+        value: V,
+    ) -> RedisResult<i64>
     where
         F: ToRedisArgs,
         V: ToRedisArgs,
@@ -1504,7 +1506,7 @@ mod tests {
         let engine = StorageEngine::new();
         for i in 0..100 {
             engine.set(
-                &format!("key{}", i),
+                format!("key{}", i),
                 RedisData::String(b"val".to_vec()),
                 None,
             );
@@ -1527,7 +1529,7 @@ mod tests {
         let engine = StorageEngine::new();
         for i in 0..100 {
             engine.set(
-                &format!("key{}", i),
+                format!("key{}", i),
                 RedisData::String(b"val".to_vec()),
                 None,
             );
@@ -1549,7 +1551,7 @@ mod tests {
         let engine = StorageEngine::new();
         for i in 0..100 {
             engine.set(
-                &format!("key{}", i),
+                format!("key{}", i),
                 RedisData::String(b"val".to_vec()),
                 None,
             );
@@ -1570,7 +1572,7 @@ mod tests {
         let engine = StorageEngine::new();
         for i in 0..50 {
             engine.set(
-                &format!("key{}", i),
+                format!("key{}", i),
                 RedisData::String(b"val".to_vec()),
                 None,
             );
@@ -1654,7 +1656,11 @@ mod tests {
         let engine = StorageEngine::new();
         // Set a key that is already expired
         let already_past = Instant::now() - Duration::from_secs(1);
-        engine.set("expired", RedisData::String(b"val".to_vec()), Some(already_past));
+        engine.set(
+            "expired",
+            RedisData::String(b"val".to_vec()),
+            Some(already_past),
+        );
 
         let val = engine.get("expired");
         assert!(val.is_some()); // Engine-level get doesn't filter expired
@@ -1833,9 +1839,11 @@ mod tests {
 
         // Set a key with an already-past expiration
         let past = Instant::now() - Duration::from_secs(1);
-        client
-            .storage
-            .set("expired_key", RedisData::String(b"val".to_vec()), Some(past));
+        client.storage.set(
+            "expired_key",
+            RedisData::String(b"val".to_vec()),
+            Some(past),
+        );
 
         let exists: bool = client.exists("expired_key").await.unwrap();
         assert!(!exists, "expired key should not be reported as existing");
@@ -1897,7 +1905,10 @@ mod tests {
 
         client.set("mykey", "value").await.unwrap();
         let result: bool = client.expire("mykey", -1).await.unwrap();
-        assert!(result, "expire with negative TTL should return true for existing key");
+        assert!(
+            result,
+            "expire with negative TTL should return true for existing key"
+        );
 
         let exists: bool = client.exists("mykey").await.unwrap();
         assert!(!exists, "key should be deleted after negative expire");
@@ -1909,7 +1920,10 @@ mod tests {
         client.start().await;
 
         let result: bool = client.expire("nokey", -1).await.unwrap();
-        assert!(!result, "expire with negative TTL on non-existent key should return false");
+        assert!(
+            !result,
+            "expire with negative TTL on non-existent key should return false"
+        );
     }
 
     #[tokio::test]

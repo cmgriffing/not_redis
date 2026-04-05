@@ -218,7 +218,7 @@ mod concurrency {
                                 });
                             }
                             while set.join_next().await.is_some() {}
-                            let _ = storage.flush();
+                            storage.flush();
                         });
                     });
                 },
@@ -253,7 +253,7 @@ mod concurrency {
                                 });
                             }
                             while set.join_next().await.is_some() {}
-                            let _ = storage.flush();
+                            storage.flush();
                         });
                     });
                 },
@@ -373,7 +373,7 @@ mod concurrency {
                                 });
                             }
                             while set.join_next().await.is_some() {}
-                            let _ = storage.flush();
+                            storage.flush();
                         });
                     });
                 },
@@ -458,7 +458,7 @@ mod concurrency {
                                 });
                             }
                             while set.join_next().await.is_some() {}
-                            let _ = storage.flush();
+                            storage.flush();
                         });
                     });
                 },

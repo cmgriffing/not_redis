@@ -37,7 +37,7 @@ fn concurrent_list_operations(c: &mut Criterion) {
                             });
                         }
                         while set.join_next().await.is_some() {}
-                        let _ = storage.flush();
+                        storage.flush();
                     });
                 });
             },
