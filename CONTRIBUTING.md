@@ -36,7 +36,12 @@ cargo test --all-features
 
 # Run benchmarks (optional but recommended)
 cargo bench --bench benchmarks
+
+# Quick performance metric (ops/sec for a mixed workload)
+./get_performance_metric.sh
 ```
+
+The `get_performance_metric.sh` script runs the `autoresearch_metric` benchmark, which measures a realistic mixed workload (string SET/GET, hash HSET/HGET) and reports operations per second. Use it to get a quick baseline before and after your changes to catch performance regressions locally.
 
 ### 4. Commit and Push
 
