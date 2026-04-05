@@ -50,7 +50,7 @@
 #![allow(clippy::needless_return)]
 
 use dashmap::DashMap;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 use smallvec::smallvec;
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -228,7 +228,7 @@ impl ExpirationManager {
 /// and supports key expiration with a background sweeper task.
 #[derive(Clone)]
 pub struct StorageEngine {
-    data: Arc<DashMap<String, StoredValue>>,
+    data: Arc<DashMap<String, StoredValue, FxBuildHasher>>,
     expiration: ExpirationManager,
     entry_count: Arc<AtomicUsize>,
     high_water_mark: Arc<AtomicUsize>,
@@ -242,7 +242,7 @@ impl StorageEngine {
     /// by the background task when started.
     pub fn new() -> Self {
         Self {
-            data: Arc::new(DashMap::new()),
+            data: Arc::new(DashMap::with_hasher(FxBuildHasher)),
             expiration: ExpirationManager::new(100),
             entry_count: Arc::new(AtomicUsize::new(0)),
             high_water_mark: Arc::new(AtomicUsize::new(0)),
@@ -625,7 +625,14 @@ impl StorageEngine {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as u64;
-        format!("{}-0", timestamp).into_bytes()
+        // Avoid format! allocation: manually build "{timestamp}-0" as bytes.
+        // Max u64 is 20 digits + "-0" = 22 bytes max.
+        let mut buf = itoa::Buffer::new();
+        let ts_str = buf.format(timestamp);
+        let mut id = Vec::with_capacity(ts_str.len() + 2);
+        id.extend_from_slice(ts_str.as_bytes());
+        id.extend_from_slice(b"-0");
+        id
     }
 }
 
@@ -851,12 +858,13 @@ impl Client {
         RV: FromRedisValue,
     {
         let key_str = key.into();
-        if let Some(val) = self.storage.get(&key_str) {
-            if val.is_expired() {
+        if let Some(stored) = self.storage.data.get(&key_str) {
+            if stored.is_expired() {
+                drop(stored);
                 self.storage.remove(&key_str);
                 return FromRedisValue::from_redis_value(Value::Null);
             }
-            match &*val.data {
+            match &*stored.data {
                 RedisData::String(s) => RV::from_redis_value(Value::String(s.clone())),
                 _ => Err(RedisError::WrongType),
             }
@@ -900,8 +908,9 @@ impl Client {
         K: ToRedisArgs,
     {
         let key_str = Self::key_to_string(&key);
-        if let Some(val) = self.storage.get(&key_str) {
-            if val.is_expired() {
+        if let Some(stored) = self.storage.data.get(&key_str) {
+            if stored.is_expired() {
+                drop(stored);
                 self.storage.remove(&key_str);
                 return Ok(false);
             }
@@ -1161,12 +1170,13 @@ impl Client {
         K: ToRedisArgs,
     {
         let key_str = Self::key_to_string(&key);
-        if let Some(val) = self.storage.get(&key_str) {
-            if val.is_expired() {
+        if let Some(stored) = self.storage.data.get(&key_str) {
+            if stored.is_expired() {
+                drop(stored);
                 self.storage.remove(&key_str);
                 return Ok(0);
             }
-            match &*val.data {
+            match &*stored.data {
                 RedisData::List(l) => Ok(l.len() as i64),
                 _ => Err(RedisError::WrongType),
             }
@@ -1435,7 +1445,7 @@ impl Client {
             match arg {
                 Value::String(s) => return s,
                 Value::Int(n) => return n.to_string().into_bytes(),
-                Value::Bool(b) => return (if b { "1" } else { "0" }).to_string().into_bytes(),
+                Value::Bool(b) => return vec![if b { b'1' } else { b'0' }],
                 _ => {}
             }
         }
