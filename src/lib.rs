@@ -50,9 +50,10 @@
 #![allow(clippy::needless_return)]
 
 use dashmap::DashMap;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::{FxHashMap, FxHashSet, FxHasher};
 use smallvec::smallvec;
 use std::collections::{BTreeMap, VecDeque};
+use std::hash::BuildHasherDefault;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -198,13 +199,15 @@ impl ExpirationManager {
     }
 }
 
+type FxBuildHasher = BuildHasherDefault<FxHasher>;
+
 /// The core storage engine for the Redis-like store.
 ///
 /// Uses a concurrent hash map ([`DashMap`]) for thread-safe access
 /// and supports key expiration with a background sweeper task.
 #[derive(Clone)]
 pub struct StorageEngine {
-    data: Arc<DashMap<String, StoredValue>>,
+    data: Arc<DashMap<String, StoredValue, FxBuildHasher>>,
     expiration: ExpirationManager,
     high_water_mark: Arc<AtomicUsize>,
 }
@@ -217,7 +220,7 @@ impl StorageEngine {
     /// by the background task when started.
     pub fn new() -> Self {
         Self {
-            data: Arc::new(DashMap::new()),
+            data: Arc::new(DashMap::with_hasher(FxBuildHasher::default())),
             expiration: ExpirationManager::new(100),
             high_water_mark: Arc::new(AtomicUsize::new(0)),
         }

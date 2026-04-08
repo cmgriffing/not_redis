@@ -1,1 +1,2 @@
 {"type":"config","name":"Optimizing not_redis mixed workload throughput","metricName":"ops_per_sec","metricUnit":"","bestDirection":"higher"}
+{"run":1,"commit":"4290d81","metric":6575486,"metrics":{},"status":"keep","description":"Baseline measurement of mixed workload throughput","timestamp":1775609748073,"segment":0,"confidence":null,"iterationTokens":102}
