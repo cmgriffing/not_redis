@@ -210,6 +210,7 @@ pub struct StorageEngine {
     data: Arc<DashMap<String, StoredValue, FxBuildHasher>>,
     expiration: ExpirationManager,
     high_water_mark: Arc<AtomicUsize>,
+    current_len: Arc<AtomicUsize>,
 }
 
 #[allow(missing_docs)]
@@ -223,6 +224,7 @@ impl StorageEngine {
             data: Arc::new(DashMap::with_hasher(FxBuildHasher::default())),
             expiration: ExpirationManager::new(100),
             high_water_mark: Arc::new(AtomicUsize::new(0)),
+            current_len: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -269,8 +271,8 @@ impl StorageEngine {
 
         match self.data.entry(key) {
             dashmap::mapref::entry::Entry::Occupied(mut entry) => {
-                let old = entry.get().clone();
-                if old.expire_at.is_some() {
+                // Check if the old entry had an expiration without cloning
+                if entry.get().expire_at.is_some() {
                     self.expiration.cancel(entry.key());
                 }
                 entry.insert(StoredValue {
@@ -283,6 +285,8 @@ impl StorageEngine {
                     data: Arc::new(value),
                     expire_at,
                 });
+                // Increment current length counter for new key
+                self.current_len.fetch_add(1, Ordering::Relaxed);
             }
         }
 
@@ -290,8 +294,8 @@ impl StorageEngine {
             self.expiration.schedule(key_expire, at);
         }
 
-        // Update high-water mark if current size exceeds it
-        let current_len = self.data.len();
+        // Update high-water mark (cheap atomic load)
+        let current_len = self.current_len.load(Ordering::Relaxed);
         self.high_water_mark.fetch_max(current_len, Ordering::Relaxed);
     }
 
@@ -310,6 +314,7 @@ impl StorageEngine {
         self.expiration.cancel(key);
         let removed = self.data.remove(key).is_some();
         if removed {
+            self.current_len.fetch_sub(1, Ordering::Relaxed);
             self.maybe_compact();
         }
         removed
@@ -323,7 +328,7 @@ impl StorageEngine {
     pub fn compact(&self) {
         self.data.shrink_to_fit();
         self.high_water_mark
-            .store(self.data.len(), Ordering::Relaxed);
+            .store(self.current_len.load(Ordering::Relaxed), Ordering::Relaxed);
     }
 
     fn maybe_compact(&self) {
@@ -331,7 +336,7 @@ impl StorageEngine {
         if hwm == 0 {
             return;
         }
-        let current_len = self.data.len();
+        let current_len = self.current_len.load(Ordering::Relaxed);
         if current_len * 4 < hwm {
             self.compact();
         }
@@ -362,6 +367,7 @@ impl StorageEngine {
         self.data.clear();
         self.expiration.clear();
         self.high_water_mark.store(0, Ordering::Relaxed);
+        self.current_len.store(0, Ordering::Relaxed);
     }
 
     /// Sets an expiration time on an existing key.
