@@ -917,7 +917,9 @@ impl Client {
                 _ => return Err(RedisError::WrongType),
             }
         } else {
+            // Pre-allocate capacity to reduce rehashing during prepopulation & batch
             let mut h = FxHashMap::default();
+            h.reserve(200);
             h.insert(field_b, value_b);
             self.storage.set(key_str, RedisData::Hash(h), None);
             true
