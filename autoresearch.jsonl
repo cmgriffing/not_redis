@@ -1,0 +1,1 @@
+{"type":"config","name":"Optimizing not_redis mixed workload throughput","metricName":"ops_per_sec","metricUnit":"","bestDirection":"higher"}
