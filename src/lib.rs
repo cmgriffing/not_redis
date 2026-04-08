@@ -221,7 +221,7 @@ impl StorageEngine {
     /// by the background task when started.
     pub fn new() -> Self {
         Self {
-            data: Arc::new(DashMap::with_hasher(FxBuildHasher::default())),
+            data: Arc::new(DashMap::with_hasher_and_shard_amount(FxBuildHasher::default(), 2)),
             expiration: ExpirationManager::new(100),
             high_water_mark: Arc::new(AtomicUsize::new(0)),
             current_len: Arc::new(AtomicUsize::new(0)),
