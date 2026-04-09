@@ -47,8 +47,7 @@ fn concurrent_mixed_read_write(c: &mut Criterion) {
                             } else {
                                 set.spawn(async move {
                                     let mut client = Client::from_storage(storage);
-                                    let _: String =
-                                        client.get(format!("key{}", i)).await.unwrap();
+                                    let _: String = client.get(format!("key{}", i)).await.unwrap();
                                 });
                             }
                         }

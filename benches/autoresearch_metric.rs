@@ -11,7 +11,7 @@ fn block_on<T>(rt: &Runtime, fut: impl std::future::Future<Output = T>) -> T {
 }
 
 /// Custom benchmark for autoresearch optimization target.
-/// 
+///
 /// This measures the throughput of a realistic mixed workload:
 /// - 40% string SET operations
 /// - 40% string GET operations
@@ -22,21 +22,24 @@ fn block_on<T>(rt: &Runtime, fut: impl std::future::Future<Output = T>) -> T {
 /// Higher is better.
 fn mixed_workload(c: &mut Criterion) {
     let mut group = c.benchmark_group("autoresearch_metric");
-    
+
     group.bench_function("mixed_ops", |b| {
         let rt = runtime();
         let mut client = Client::new();
         block_on(&rt, client.start());
         let _ = block_on(&rt, client.flushdb());
-        
+
         // Pre-populate some data for GETs
         block_on(&rt, async {
             for i in 0..100 {
                 client.set(format!("key{}", i), "value").await.unwrap();
-                client.hset("myhash", format!("field{}", i), "value").await.unwrap();
+                client
+                    .hset("myhash", format!("field{}", i), "value")
+                    .await
+                    .unwrap();
             }
         });
-        
+
         b.iter(|| {
             block_on(&rt, async {
                 // Do a batch of 1000 mixed operations
@@ -52,28 +55,37 @@ fn mixed_workload(c: &mut Criterion) {
                         }
                         8 => {
                             // HSET
-                            client.hset("myhash", format!("field{}", i), "value").await.unwrap();
+                            client
+                                .hset("myhash", format!("field{}", i), "value")
+                                .await
+                                .unwrap();
                         }
                         9 => {
                             // HGET
-                            let _: String = client.hget("myhash", format!("field{}", i % 100)).await.unwrap();
+                            let _: String = client
+                                .hget("myhash", format!("field{}", i % 100))
+                                .await
+                                .unwrap();
                         }
                         _ => unreachable!(),
                     }
                 }
             });
             let _ = block_on(&rt, client.flushdb());
-            
+
             // Re-populate for next iteration
             block_on(&rt, async {
                 for i in 0..100 {
                     client.set(format!("key{}", i), "value").await.unwrap();
-                    client.hset("myhash", format!("field{}", i), "value").await.unwrap();
+                    client
+                        .hset("myhash", format!("field{}", i), "value")
+                        .await
+                        .unwrap();
                 }
             });
         });
     });
-    
+
     group.finish();
 }
 

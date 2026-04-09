@@ -50,9 +50,10 @@
 #![allow(clippy::needless_return)]
 
 use dashmap::DashMap;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::{FxHashMap, FxHashSet, FxHasher};
 use smallvec::smallvec;
 use std::collections::{BTreeMap, VecDeque};
+use std::hash::BuildHasherDefault;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -198,15 +199,18 @@ impl ExpirationManager {
     }
 }
 
+type FxBuildHasher = BuildHasherDefault<FxHasher>;
+
 /// The core storage engine for the Redis-like store.
 ///
 /// Uses a concurrent hash map ([`DashMap`]) for thread-safe access
 /// and supports key expiration with a background sweeper task.
 #[derive(Clone)]
 pub struct StorageEngine {
-    data: Arc<DashMap<String, StoredValue>>,
+    data: Arc<DashMap<String, StoredValue, FxBuildHasher>>,
     expiration: ExpirationManager,
     high_water_mark: Arc<AtomicUsize>,
+    current_len: Arc<AtomicUsize>,
 }
 
 #[allow(missing_docs)]
@@ -217,9 +221,13 @@ impl StorageEngine {
     /// by the background task when started.
     pub fn new() -> Self {
         Self {
-            data: Arc::new(DashMap::new()),
+            data: Arc::new(DashMap::with_hasher_and_shard_amount(
+                FxBuildHasher::default(),
+                2,
+            )),
             expiration: ExpirationManager::new(100),
             high_water_mark: Arc::new(AtomicUsize::new(0)),
+            current_len: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -266,8 +274,8 @@ impl StorageEngine {
 
         match self.data.entry(key) {
             dashmap::mapref::entry::Entry::Occupied(mut entry) => {
-                let old = entry.get().clone();
-                if old.expire_at.is_some() {
+                // Check if the old entry had an expiration without cloning
+                if entry.get().expire_at.is_some() {
                     self.expiration.cancel(entry.key());
                 }
                 entry.insert(StoredValue {
@@ -280,6 +288,8 @@ impl StorageEngine {
                     data: Arc::new(value),
                     expire_at,
                 });
+                // Increment current length counter for new key
+                self.current_len.fetch_add(1, Ordering::Relaxed);
             }
         }
 
@@ -287,9 +297,10 @@ impl StorageEngine {
             self.expiration.schedule(key_expire, at);
         }
 
-        // Update high-water mark if current size exceeds it
-        let current_len = self.data.len();
-        self.high_water_mark.fetch_max(current_len, Ordering::Relaxed);
+        // Update high-water mark (cheap atomic load)
+        let current_len = self.current_len.load(Ordering::Relaxed);
+        self.high_water_mark
+            .fetch_max(current_len, Ordering::Relaxed);
     }
 
     /// Gets a value from the storage engine by key.
@@ -307,6 +318,7 @@ impl StorageEngine {
         self.expiration.cancel(key);
         let removed = self.data.remove(key).is_some();
         if removed {
+            self.current_len.fetch_sub(1, Ordering::Relaxed);
             self.maybe_compact();
         }
         removed
@@ -320,7 +332,7 @@ impl StorageEngine {
     pub fn compact(&self) {
         self.data.shrink_to_fit();
         self.high_water_mark
-            .store(self.data.len(), Ordering::Relaxed);
+            .store(self.current_len.load(Ordering::Relaxed), Ordering::Relaxed);
     }
 
     fn maybe_compact(&self) {
@@ -328,7 +340,7 @@ impl StorageEngine {
         if hwm == 0 {
             return;
         }
-        let current_len = self.data.len();
+        let current_len = self.current_len.load(Ordering::Relaxed);
         if current_len * 4 < hwm {
             self.compact();
         }
@@ -359,6 +371,7 @@ impl StorageEngine {
         self.data.clear();
         self.expiration.clear();
         self.high_water_mark.store(0, Ordering::Relaxed);
+        self.current_len.store(0, Ordering::Relaxed);
     }
 
     /// Sets an expiration time on an existing key.
@@ -803,12 +816,14 @@ impl Client {
         RV: FromRedisValue,
     {
         let key_str = key.into();
-        if let Some(val) = self.storage.get(&key_str) {
-            if val.is_expired() {
+        if let Some(stored) = self.storage.data.get(&key_str) {
+            if stored.is_expired() {
+                // Drop the Ref before removing to avoid potential deadlock
+                drop(stored);
                 self.storage.remove(&key_str);
                 return FromRedisValue::from_redis_value(Value::Null);
             }
-            match &*val.data {
+            match &*stored.data {
                 RedisData::String(s) => RV::from_redis_value(Value::String(s.clone())),
                 _ => Err(RedisError::WrongType),
             }
@@ -891,7 +906,12 @@ impl Client {
     /// * `V` - The field value
     ///
     /// Returns `1` if the field is new, `0` if the field was updated.
-    pub async fn hset<K: Into<String>, F, V>(&mut self, key: K, field: F, value: V) -> RedisResult<i64>
+    pub async fn hset<K: Into<String>, F, V>(
+        &mut self,
+        key: K,
+        field: F,
+        value: V,
+    ) -> RedisResult<i64>
     where
         F: ToRedisArgs,
         V: ToRedisArgs,
@@ -906,7 +926,9 @@ impl Client {
                 _ => return Err(RedisError::WrongType),
             }
         } else {
+            // Pre-allocate capacity to reduce rehashing during prepopulation & batch
             let mut h = FxHashMap::default();
+            h.reserve(200);
             h.insert(field_b, value_b);
             self.storage.set(key_str, RedisData::Hash(h), None);
             true
@@ -1062,12 +1084,13 @@ impl Client {
         K: ToRedisArgs,
     {
         let key_str = Self::key_to_string(&key);
-        if let Some(val) = self.storage.get(&key_str) {
-            if val.is_expired() {
+        if let Some(stored) = self.storage.data.get(&key_str) {
+            if stored.is_expired() {
+                drop(stored);
                 self.storage.remove(&key_str);
                 return Ok(0);
             }
-            match &*val.data {
+            match &*stored.data {
                 RedisData::List(l) => Ok(l.len() as i64),
                 _ => Err(RedisError::WrongType),
             }
