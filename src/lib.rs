@@ -221,7 +221,10 @@ impl StorageEngine {
     /// by the background task when started.
     pub fn new() -> Self {
         Self {
-            data: Arc::new(DashMap::with_hasher_and_shard_amount(FxBuildHasher::default(), 2)),
+            data: Arc::new(DashMap::with_hasher_and_shard_amount(
+                FxBuildHasher::default(),
+                2,
+            )),
             expiration: ExpirationManager::new(100),
             high_water_mark: Arc::new(AtomicUsize::new(0)),
             current_len: Arc::new(AtomicUsize::new(0)),
@@ -296,7 +299,8 @@ impl StorageEngine {
 
         // Update high-water mark (cheap atomic load)
         let current_len = self.current_len.load(Ordering::Relaxed);
-        self.high_water_mark.fetch_max(current_len, Ordering::Relaxed);
+        self.high_water_mark
+            .fetch_max(current_len, Ordering::Relaxed);
     }
 
     /// Gets a value from the storage engine by key.
@@ -902,7 +906,12 @@ impl Client {
     /// * `V` - The field value
     ///
     /// Returns `1` if the field is new, `0` if the field was updated.
-    pub async fn hset<K: Into<String>, F, V>(&mut self, key: K, field: F, value: V) -> RedisResult<i64>
+    pub async fn hset<K: Into<String>, F, V>(
+        &mut self,
+        key: K,
+        field: F,
+        value: V,
+    ) -> RedisResult<i64>
     where
         F: ToRedisArgs,
         V: ToRedisArgs,
