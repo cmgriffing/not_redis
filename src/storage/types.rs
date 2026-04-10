@@ -15,6 +15,7 @@ pub enum RedisData {
     Set(FxHashSet<Vec<u8>>),
     Hash(FxHashMap<Vec<u8>, Vec<u8>>),
     ZSet(BTreeMap<Vec<u8>, f64>),
+    Stream(Vec<(Vec<u8>, Vec<(Vec<u8>, Vec<u8>)>)>),
 }
 
 /// A value stored in the storage engine with optional expiration.
@@ -57,6 +58,11 @@ impl RedisData {
                 map.iter().map(|(k, _)| k.len()).sum::<usize>()
                     + std::mem::size_of::<(Vec<u8>, f64)>() * map.capacity()
                     + std::mem::size_of::<f64>()
+            }
+            RedisData::Stream(entries) => {
+                entries.iter().map(|(id, fields)| {
+                    id.len() + fields.iter().map(|(k, v)| k.len() + v.len()).sum::<usize>()
+                }).sum::<usize>()
             }
         }
     }

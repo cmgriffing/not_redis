@@ -1,3 +1,4 @@
 {"type":"config","name":"Optimizing mixed workload throughput","metricName":"ops_per_sec","metricUnit":"","bestDirection":"higher"}
 {"type":"config","name":"Optimizing mixed workload throughput","metricName":"ops_per_sec","metricUnit":"","bestDirection":"higher"}
 {"run":1,"commit":"e726a5f","metric":11356925,"metrics":{},"status":"keep","description":"Baseline run to confirm current performance.","timestamp":1775860841598,"segment":0,"confidence":null,"iterationTokens":74}
+{"run":2,"commit":"e0d7822","metric":11412528,"metrics":{},"status":"keep","description":"Avoid unnecessary block_on for memory.is_enabled() in hot paths using try_read.","timestamp":1775860994669,"segment":0,"confidence":null,"iterationTokens":25703}
