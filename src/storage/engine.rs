@@ -85,10 +85,11 @@ impl StorageEngine {
         };
 
         if memory_enabled {
-            let memory_delta = stored.estimated_size() - old_value.as_ref().map(|v| v.estimated_size()).unwrap_or(0);
+            let old_size = old_value.as_ref().map(|v| v.estimated_size()).unwrap_or(0);
+            let new_size = stored.estimated_size();
             
-            rt.block_on(async {
-                if memory_delta > 0 {
+            if new_size > old_size {
+                rt.block_on(async {
                     while self.memory.check_eviction_needed().await {
                         if let Some(evicted_key) = self.memory.evict_one(&|k| self.data.get(k).cloned()).await {
                             if let Some(evicted) = self.data.remove(&evicted_key) {
@@ -99,8 +100,8 @@ impl StorageEngine {
                             break;
                         }
                     }
-                }
-            });
+                });
+            }
         }
 
         if let Some(ref old) = old_value {
