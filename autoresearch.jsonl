@@ -1,2 +1,3 @@
 {"type":"config","name":"Optimizing mixed workload throughput","metricName":"ops_per_sec","metricUnit":"","bestDirection":"higher"}
 {"type":"config","name":"Optimizing mixed workload throughput","metricName":"ops_per_sec","metricUnit":"","bestDirection":"higher"}
+{"run":1,"commit":"e726a5f","metric":11356925,"metrics":{},"status":"keep","description":"Baseline run to confirm current performance.","timestamp":1775860841598,"segment":0,"confidence":null,"iterationTokens":74}

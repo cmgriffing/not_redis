@@ -71,7 +71,7 @@ impl StorageEngine {
     pub fn set(&self, key: &str, value: RedisData, expire_at: Option<Instant>) {
         let rt = tokio::runtime::Handle::current();
         
-        let memory_enabled = rt.block_on(self.memory.is_enabled());
+        let memory_enabled = self.memory.is_enabled_sync();
         
         if memory_enabled && rt.block_on(self.memory.should_reject_write()) {
             return;
@@ -131,8 +131,9 @@ impl StorageEngine {
         let value = self.data.get(key).map(|v| v.clone());
         
         if value.is_some() {
-            let rt = tokio::runtime::Handle::current();
-            if rt.block_on(self.memory.is_enabled()) {
+            let memory_enabled = self.memory.is_enabled_sync();
+            if memory_enabled {
+                let rt = tokio::runtime::Handle::current();
                 rt.block_on(self.memory.record_read(key));
             }
         }
@@ -141,9 +142,10 @@ impl StorageEngine {
     }
 
     pub fn remove(&self, key: &str) -> bool {
+        let memory_enabled = self.memory.is_enabled_sync();
         if let Some(old) = self.data.get(key) {
-            let rt = tokio::runtime::Handle::current();
-            if rt.block_on(self.memory.is_enabled()) {
+            if memory_enabled {
+                let rt = tokio::runtime::Handle::current();
                 rt.block_on(self.memory.remove_memory(key, &old));
             }
         }

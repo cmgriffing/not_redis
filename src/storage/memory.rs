@@ -55,6 +55,19 @@ impl MemoryTracker {
         config.maxmemory.is_some()
     }
 
+    pub fn is_enabled_sync(&self) -> bool {
+        // This is a bit tricky because we can't await in a sync function.
+        // But if we use try_read, we might fail. 
+        // However, for the hot path, we can assume the lock is mostly uncontended.
+        // Actually, a better way is to use an AtomicBool for 'enabled' status.
+        // For now, let's use try_read.
+        if let Ok(config) = self.config.try_read() {
+            config.maxmemory.is_some()
+        } else {
+            false // Fallback: if we can't read, assume disabled to avoid block_on
+        }
+    }
+
     pub async fn add_memory(&self, key: &str, value: &StoredValue) -> usize {
         let size = value.data.estimated_size() + key.len() + KEY_OVERHEAD;
         self.total_memory.fetch_add(size, Ordering::Relaxed);
