@@ -69,11 +69,32 @@ impl StorageEngine {
     }
 
     pub fn set(&self, key: &str, value: RedisData, expire_at: Option<Instant>) {
-        let rt = tokio::runtime::Handle::current();
-        
         let memory_enabled = self.memory.is_enabled_sync();
         
-        if memory_enabled && rt.block_on(self.memory.should_reject_write()) {
+        if !memory_enabled {
+            let old_value = self.data.get(key).cloned();
+            let stored = StoredValue {
+                data: value,
+                expire_at,
+            };
+
+            if let Some(ref old) = old_value {
+                if old.expire_at.is_some() {
+                    self.expiration.cancel_expiration(key);
+                }
+            }
+
+            self.data.insert(key.to_string(), stored);
+
+            if let Some(at) = expire_at {
+                self.expiration.schedule_expiration(key.to_string(), at);
+            }
+            return;
+        }
+
+        let rt = tokio::runtime::Handle::current();
+        
+        if rt.block_on(self.memory.should_reject_write()) {
             return;
         }
 
@@ -108,9 +129,7 @@ impl StorageEngine {
             if old.expire_at.is_some() {
                 self.expiration.cancel_expiration(key);
             }
-            if memory_enabled {
-                rt.block_on(self.memory.remove_memory(key, old));
-            }
+            rt.block_on(self.memory.remove_memory(key, old));
         }
 
         self.data.insert(key.to_string(), stored);
@@ -119,13 +138,11 @@ impl StorageEngine {
             self.expiration.schedule_expiration(key.to_string(), at);
         }
         
-        if memory_enabled {
-            rt.block_on(async {
-                if let Some(new_value) = self.data.get(key) {
-                    self.memory.add_memory(key, &new_value).await;
-                }
-            });
-        }
+        rt.block_on(async {
+            if let Some(new_value) = self.data.get(key) {
+                self.memory.add_memory(key, &new_value).await;
+            }
+        });
     }
 
     pub fn get(&self, key: &str) -> Option<StoredValue> {
