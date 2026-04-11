@@ -8,9 +8,9 @@ use std::time::Instant;
 const KEY_OVERHEAD: usize = 50;
 const COUNTER_INIT: u32 = 5;
 
-#[derive(Debug, Clone)]
 pub struct MemoryTracker {
     config: Arc<tokio::sync::RwLock<StorageConfig>>,
+    enabled: AtomicUsize, // 1 if enabled, 0 if disabled
     total_memory: AtomicUsize,
     lru_order: Arc<tokio::sync::RwLock<VecDeque<String>>>,
     access_counts: Arc<tokio::sync::RwLock<std::collections::HashMap<String, u32>>>,
@@ -20,6 +20,7 @@ impl MemoryTracker {
     pub fn new() -> Self {
         Self {
             config: Arc::new(tokio::sync::RwLock::new(StorageConfig::new())),
+            enabled: AtomicUsize::new(0),
             total_memory: AtomicUsize::new(0),
             lru_order: Arc::new(tokio::sync::RwLock::new(VecDeque::new())),
             access_counts: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
@@ -29,6 +30,11 @@ impl MemoryTracker {
     pub async fn set_maxmemory(&self, maxmemory: Option<usize>) {
         let mut config = self.config.write().await;
         config.maxmemory = maxmemory;
+        if maxmemory.is_some() {
+            self.enabled.store(1, Ordering::SeqCst);
+        } else {
+            self.enabled.store(0, Ordering::SeqCst);
+        }
     }
 
     pub async fn set_maxmemory_policy(&self, policy: MaxMemoryPolicy) {
@@ -56,16 +62,7 @@ impl MemoryTracker {
     }
 
     pub fn is_enabled_sync(&self) -> bool {
-        // This is a bit tricky because we can't await in a sync function.
-        // But if we use try_read, we might fail. 
-        // However, for the hot path, we can assume the lock is mostly uncontended.
-        // Actually, a better way is to use an AtomicBool for 'enabled' status.
-        // For now, let's use try_read.
-        if let Ok(config) = self.config.try_read() {
-            config.maxmemory.is_some()
-        } else {
-            false // Fallback: if we can't read, assume disabled to avoid block_on
-        }
+        self.enabled.load(Ordering::SeqCst) == 1
     }
 
     pub async fn add_memory(&self, key: &str, value: &StoredValue) -> usize {
@@ -79,6 +76,10 @@ impl MemoryTracker {
         let size = value.data.estimated_size() + key.len() + KEY_OVERHEAD;
         self.total_memory.fetch_sub(size, Ordering::Relaxed);
         self.remove_from_tracking(key).await;
+        if self.total_memory.load(Ordering::Relaxed) == 0 {
+             // We could potentially set enabled to 0 here if maxmemory was None, 
+             // but set_maxmemory handles it.
+        }
     }
 
     pub async fn check_eviction_needed(&self) -> bool {
