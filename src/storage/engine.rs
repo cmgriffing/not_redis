@@ -87,14 +87,12 @@ impl StorageEngine {
             self.data.insert(key.to_string(), stored);
 
             if let Some(at) = expire_at {
-                self.expiration.schedule_expiration(key.to_string(), at);
+                self.expiration.schedule_expirations(key.to_string(), at);
             }
             return;
         }
 
-        let rt = tokio::runtime::Handle::current();
-        
-        if rt.block_on(self.memory.should_reject_write()) {
+        if self.memory.should_reject_write_sync() {
             return;
         }
 

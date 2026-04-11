@@ -23,3 +23,4 @@
 {"run":19,"commit":"no_chan","metric":11697000,"metrics":{},"status":"discard","description":"Attempted to add a comment to `get` optimization. No measurable change.","timestamp":1775948569181,"segment":2,"confidence":2.2172076936624334,"iterationTokens":4206}
 {"run":20,"commit":"no_chan","metric":11726766,"metrics":{},"status":"discard","description":"Attempted to use `.len()` instead of `.capacity()` in `estimated_size` calculation. No measurable change.","timestamp":1775948655455,"segment":2,"confidence":4.434415387324867,"iterationTokens":1912}
 {"type":"config","name":"Optimizing mixed workload throughput","metricName":"ops_per_sec","metricUnit":"","bestDirection":"higher"}
+{"run":21,"commit":"5083721","metric":11752814,"metrics":{},"status":"keep","description":"Baseline run in current session","timestamp":1775951144920,"segment":3,"confidence":null,"iterationTokens":87}
