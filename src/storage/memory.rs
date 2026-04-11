@@ -68,18 +68,15 @@ impl MemoryTracker {
     pub async fn add_memory(&self, key: &str, value: &StoredValue) -> usize {
         let size = value.data.estimated_size() + key.len() + KEY_OVERHEAD;
         self.total_memory.fetch_add(size, Ordering::Relaxed);
-        self.update_access(key, value.expire_at.is_some()).await;
+        let has_ttl = value.expire_at.is_some();
+        self.update_access_sync(key, has_ttl);
         size
     }
 
-    pub async fn remove_memory(&self, key: &str, value: &StoredValue) {
+    pub async fn remove_memory(&self, key: &sstr, value: &StoredValue) {
         let size = value.data.estimated_size() + key.len() + KEY_OVERHEAD;
         self.total_memory.fetch_sub(size, Ordering::Relaxed);
-        self.remove_from_tracking(key).await;
-        if self.total_memory.load(Ordering::Relaxed) == 0 {
-             // We could potentially set enabled to 0 here if maxmemory was None, 
-             // but set_maxmemory handles it.
-        }
+        self.remove_from_tracking_sync(key);
     }
 
     pub async fn check_eviction_needed(&self) -> bool {
@@ -256,6 +253,44 @@ impl MemoryTracker {
 
     pub async fn record_read(&self, key: &str) {
         self.update_access(key, false).await;
+    }
+
+    fn update_access_sync(&self, key: &str, _has_ttl: bool) {
+        let policy = self.get_policy_sync();
+        
+        if matches!(policy, MaxMemoryPolicy::AllKeysLru | MaxMemoryPolicy::VolatileLru) {
+            if let Ok(mut lru) = self.lru_order.try_write() {
+                lru.retain(|k| k != key);
+                lru.push_back(key.to_string());
+            }
+        }
+
+        if matches!(policy, MaxMemoryPolicy::AllKeysLfu | MaxMemoryPolicy::VolatileLfu) {
+            if let Ok(mut counts) = self.access_counts.try_write() {
+                let counter = counts.entry(key.to_string()).or_insert(COUNTER_INIT);
+                *counter = counter.saturating_add(1);
+            }
+        }
+    }
+
+    fn remove_from_tracking_sync(&self, key: &str) {
+        if let Ok(mut lru) = self.lru_order.try_write() {
+            lru.retain(|k| k != key);
+        }
+        
+        if let Ok(mut counts): Result<_, _> = Ok(self.access_counts.try_write()) {
+            if let Ok(mut counts) = counts {
+                counts.remove(key);
+            }
+        }
+    }
+
+    fn get_policy_sync(&self) -> MaxMemoryPolicy {
+        if let Ok(config) = self.config.try_read() {
+            config.maxmemory_policy
+        } else {
+            MaxMemoryPolicy::NoEviction
+        }
     }
 }
 

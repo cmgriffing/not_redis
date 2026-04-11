@@ -112,7 +112,21 @@ impl StorageEngine {
                 rt.block_on(self.memory.remove_memory(key, old));
             }
         }
-//...
+
+        self.data.insert(key.to_string(), stored);
+
+        if let Some(at) = expire_at {
+            self.expiration.schedule_expiration(key.to_string(), at);
+        }
+        
+        if memory_enabled {
+            rt.block_on(async {
+                if let Some(new_value) = self.data.get(key) {
+                    self.memory.add_memory(key, &new_value).await;
+                }
+            });
+        }
+    }
 
     pub fn get(&self, key: &str) -> Option<StoredValue> {
         let value = self.data.get(key).map(|v| v.clone());
