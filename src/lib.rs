@@ -289,7 +289,9 @@ impl StorageEngine {
                     expire_at,
                 });
                 // Increment current length counter for new key
-                self.current_len.fetch_add(1, Ordering::Relaxed);
+                let new_len = self.current_len.fetch_add(1, Ordering::Relaxed) + 1;
+                // Update high-water mark when new keys are added
+                self.high_water_mark.fetch_max(new_len, Ordering::Relaxed);
             }
         }
 
@@ -297,10 +299,7 @@ impl StorageEngine {
             self.expiration.schedule(key_expire, at);
         }
 
-        // Update high-water mark (cheap atomic load)
-        let current_len = self.current_len.load(Ordering::Relaxed);
-        self.high_water_mark
-            .fetch_max(current_len, Ordering::Relaxed);
+
     }
 
     /// Gets a value from the storage engine by key.
