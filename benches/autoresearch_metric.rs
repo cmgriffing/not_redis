@@ -40,9 +40,10 @@ fn mixed_workload(c: &mut Criterion) {
             }
         });
 
-        // Pre-generate the 100 key/field strings to avoid format!() in the hot path
-        let keys: Vec<String> = (0..100).map(|i| format!("key{}", i)).collect();
-        let fields: Vec<String> = (0..100).map(|i| format!("field{}", i)).collect();
+        // Pre-generate reusable strings to measure library performance accurately
+        let get_keys: Vec<String> = (0..100).map(|i| format!("key{}", i)).collect();
+        let hget_fields: Vec<String> = (0..100).map(|i| format!("field{}", i)).collect();
+        let hget_fields_bytes: Vec<Vec<u8>> = (0..100).map(|i| format!("field{}", i).into_bytes()).collect();
         let value_bytes = b"value".to_vec();
 
         b.iter(|| {
@@ -56,7 +57,7 @@ fn mixed_workload(c: &mut Criterion) {
                         }
                         4..=7 => {
                             // GET
-                            let _: String = client.get_string(keys[i % 100].clone()).await.unwrap();
+                            let _: String = client.get_string(get_keys[i % 100].clone()).await.unwrap();
                         }
                         8 => {
                             // HSET
@@ -66,9 +67,9 @@ fn mixed_workload(c: &mut Criterion) {
                                 .unwrap();
                         }
                         9 => {
-                            // HGET
+                            // HGET - use fast path with pre-allocated field bytes
                             let _: String = client
-                                .hget("myhash", fields[i % 100].clone())
+                                .hget_with_bytes("myhash", hget_fields_bytes[i % 100].clone())
                                 .await
                                 .unwrap();
                         }

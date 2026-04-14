@@ -1050,7 +1050,34 @@ impl Client {
         }
     }
 
-    /// Gets a hash field with pre-converted field bytes (avoids value_to_vec allocation).
+    /// Gets a hash field with pre-converted field bytes.
+    #[inline]
+    pub async fn hget_with_bytes<K: Into<String>, RV>(&mut self, key: K, field_b: Vec<u8>) -> RedisResult<RV>
+    where
+        RV: FromRedisValue,
+    {
+        let key_str = key.into();
+        if let Some(stored) = self.storage.data.get(&key_str) {
+            if stored.is_expired() {
+                self.storage.remove(&key_str);
+                return FromRedisValue::from_redis_value(Value::Null);
+            }
+            match &*stored.data {
+                RedisData::Hash(h) => {
+                    if let Some(v) = h.get(&field_b) {
+                        RV::from_redis_value(Value::String(v.clone()))
+                    } else {
+                        FromRedisValue::from_redis_value(Value::Null)
+                    }
+                }
+                _ => Err(RedisError::WrongType),
+            }
+        } else {
+            FromRedisValue::from_redis_value(Value::Null)
+        }
+    }
+
+    /// Gets a hash field with pre-converted field bytes and returns raw Vec<u8>.
     #[inline]
     pub async fn hget_raw(&mut self, key: &str, field_b: Vec<u8>) -> Option<Vec<u8>> {
         if let Some(stored) = self.storage.data.get(key) {
