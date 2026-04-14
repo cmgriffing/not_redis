@@ -28,7 +28,10 @@ impl StorageEngine {
 
     pub fn new_with_sweep_interval(sweep_interval_ms: u64) -> Self {
         let engine = Self {
-            data: Arc::new(DashMap::new()),
+            data: Arc::new(DashMap::with_hasher_and_shard_amount(
+                rustc_hash::FxBuildHasher::default(),
+                8,
+            )),
             expiration: ExpirationManager::new(sweep_interval_ms),
             memory: MemoryTracker::new(),
         };
@@ -72,23 +75,14 @@ impl StorageEngine {
         let memory_enabled = self.memory.is_enabled_sync();
         
         if !memory_enabled {
-            let old_value = self.data.get(key).cloned();
-            let stored = StoredValue {
-                data: value,
-                expire_at,
-            };
+            self.data.insert(
+                key.to_string(),
+                StoredValue { data: value, expire_at },
+            );
+            return;
+        }
 
-            if let Some(ref old) = old_value {
-                if old.expire_at.is_some() {
-                    self.expiration.cancel_expiration(key);
-                }
-            }
-
-            self.data.insert(key.to_string(), stored);
-
-            if let Some(at) = expire_at {
-                self.expiration.schedule_expirations(key.to_string(), at);
-            }
+        if self.memory.should_reject_write_sync() {
             return;
         }
 
@@ -146,12 +140,9 @@ impl StorageEngine {
     pub fn get(&self, key: &str) -> Option<StoredValue> {
         let value = self.data.get(key).map(|v| v.clone());
         
-        if value.is_some() {
-            let memory_enabled = self.memory.is_enabled_sync();
-            if memory_enabled {
-                let rt = tokio::runtime::Handle::current();
-                rt.block_on(self.memory.record_read(key));
-            }
+        if value.is_some() && self.memory.is_enabled_sync() {
+            let rt = tokio::runtime::Handle::current();
+            rt.block_on(self.memory.record_read(key));
         }
         
         value
