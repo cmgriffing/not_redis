@@ -1,0 +1,1 @@
+{"run":1,"commit":"de88b6f","metric":11697411,"metrics":{},"status":"keep","description":"Baseline measurement of mixed workload throughput (40% SET, 40% GET, 10% HSET, 10% HGET)","timestamp":1776126871417,"segment":0,"confidence":null,"iterationTokens":428,"asi":{"hypothesis":"Baseline performance measurement","ops_per_sec":11697411}}
