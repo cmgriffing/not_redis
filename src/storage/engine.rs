@@ -44,7 +44,47 @@ impl StorageEngine {
 
     pub fn with_config(config: StorageConfig) -> Self {
         let mut engine = Self {
-            data: Arc::new(DashMap::new()),
+            data: Arc::new(DashMap::with_hasher_and_shard_amount(
+                rustc_hash::FxBuildHasher::default(),
+                16,
+            )),
+            expiration: ExpirationManager::new(100),
+            memory: MemoryTracker::new(),
+        };
+        
+        if let Some(maxmemory) = config.maxmemory {
+            let rt = tokio::runtime::Handle::current();
+            rt.block_on(engine.memory.set_maxmemory(Some(maxmemory)));
+        }
+        
+        let rt = tokio::runtime::Handle::current();
+        rt.block_on(engine.memory.set_maxmemory_policy(config.maxmemory_policy));
+        
+        engine
+    }
+
+    pub fn new_with_sweep_interval(sweep_interval_ms: u64) -> Self {
+        let engine = Self {
+            data: Arc::new(DashMap::with_hasher_and_shard_amount(
+                rustc_hash::FxBuildHasher::default(),
+                16,
+            )),
+            expiration: ExpirationManager::new(sweep_interval_ms),
+            memory: MemoryTracker::new(),
+        };
+        engine
+    }
+
+    pub fn new(sweep_interval_ms: u64) -> Self {
+        Self::new_with_sweep_interval(sweep_interval_ms)
+    }
+
+    pub fn with_config(config: StorageConfig) -> Self {
+        let mut engine = Self {
+            data: Arc::new(DashMap::with_hasher_and_shard_amount(
+                rustc_hash::FxBuildHasher::default(),
+                16,
+            )),
             expiration: ExpirationManager::new(100),
             memory: MemoryTracker::new(),
         };
@@ -97,25 +137,6 @@ impl StorageEngine {
                 entry.insert(StoredValue { data: value, expire_at });
             }
         }
-
-        if let Some(ref old) = old_value {
-            if old.expire_at.is_some() {
-                self.expiration.cancel_expiration(key);
-            }
-            rt.block_on(self.memory.remove_memory(key, old));
-        }
-
-        self.data.insert(key.to_string(), stored);
-
-        if let Some(at) = expire_at {
-            self.expiration.schedule_expiration(key.to_string(), at);
-        }
-        
-        rt.block_on(async {
-            if let Some(new_value) = self.data.get(key) {
-                self.memory.add_memory(key, &new_value).await;
-            }
-        });
     }
 
     pub fn get(&self, key: &str) -> Option<StoredValue> {
@@ -127,6 +148,20 @@ impl StorageEngine {
         }
         
         value
+    }
+
+    pub fn remove(&self, key: &str) -> bool {
+        let memory_enabled = self.memory.is_enabled_sync();
+        if !memory_enabled {
+            return self.data.remove(key).is_some();
+        }
+        if let Some(old) = self.data.get(key) {
+            let rt = tokio::runtime::Handle::current();
+            rt.block_on(self.memory.remove_memory(key, &old));
+        }
+        
+        self.expiration.cancel_expiration(key);
+        self.data.remove(key).is_some()
     }
 
     pub fn remove(&self, key: &str) -> bool {
