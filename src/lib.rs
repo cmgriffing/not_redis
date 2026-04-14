@@ -905,6 +905,7 @@ impl Client {
     /// * `V` - The field value
     ///
     /// Returns `1` if the field is new, `0` if the field was updated.
+    #[inline]
     pub async fn hset<K: Into<String>, F, V>(
         &mut self,
         key: K,
@@ -935,12 +936,38 @@ impl Client {
         Ok(if is_new { 1 } else { 0 })
     }
 
+    /// Returns `1` if the field is new, `0` if the field was updated.
+    /// Optimized version for when field and value are already byte vectors.
+    #[inline]
+    pub async fn hset_bytes(
+        &mut self,
+        key: String,
+        field_b: Vec<u8>,
+        value_b: Vec<u8>,
+    ) -> RedisResult<i64> {
+        let is_new = if let Some(mut stored) = self.storage.data.get_mut(&key) {
+            let data_ref = Arc::make_mut(&mut stored.data);
+            match data_ref {
+                RedisData::Hash(h) => h.insert(field_b, value_b).is_none(),
+                _ => return Err(RedisError::WrongType),
+            }
+        } else {
+            let mut h = FxHashMap::default();
+            h.reserve(200);
+            h.insert(field_b, value_b);
+            self.storage.set(key, RedisData::Hash(h), None);
+            true
+        };
+        Ok(if is_new { 1 } else { 0 })
+    }
+
     /// Gets a field value from a hash.
     ///
     /// # Type Parameters
     /// * `K` - The hash key (must be convertible to `String`)
     /// * `F` - The field name
     /// * `RV` - The return value type
+    #[inline]
     pub async fn hget<K: Into<String>, F, RV>(&mut self, key: K, field: F) -> RedisResult<RV>
     where
         F: ToRedisArgs,
@@ -1354,6 +1381,7 @@ impl Client {
         })
     }
 
+    #[inline]
     fn value_to_vec<V: ToRedisArgs>(v: &V) -> Vec<u8> {
         let args = v.to_redis_args();
         for arg in args {
