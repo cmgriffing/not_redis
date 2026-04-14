@@ -836,6 +836,7 @@ impl Client {
     /// # Type Parameters
     /// * `K` - The key type (must be convertible to `String`)
     /// * `V` - The value type
+    #[inline]
     pub async fn set<K: Into<String>, V>(&mut self, key: K, value: V) -> RedisResult<()>
     where
         V: ToRedisArgs,
@@ -844,6 +845,35 @@ impl Client {
         let val = Self::value_to_vec(&value);
         self.storage.set(key_str, RedisData::String(val), None);
         Ok(())
+    }
+
+    /// Sets a key with pre-converted value bytes (avoids value_to_vec allocation).
+    #[inline]
+    pub async fn set_with_bytes(&mut self, key: String, value: Vec<u8>) -> RedisResult<()> {
+        self.storage.set(key, RedisData::String(value), None);
+        Ok(())
+    }
+
+    /// Gets a value by key (optimized with String input).
+    #[inline]
+    pub async fn get_string<K: Into<String>, RV>(&mut self, key: K) -> RedisResult<RV>
+    where
+        RV: FromRedisValue,
+    {
+        let key_str = key.into();
+        if let Some(stored) = self.storage.data.get(&key_str) {
+            if stored.is_expired() {
+                drop(stored);
+                self.storage.remove(&key_str);
+                return FromRedisValue::from_redis_value(Value::Null);
+            }
+            match &*stored.data {
+                RedisData::String(s) => RV::from_redis_value(Value::String(s.clone())),
+                _ => Err(RedisError::WrongType),
+            }
+        } else {
+            FromRedisValue::from_redis_value(Value::Null)
+        }
     }
 
     /// Deletes one or more keys from the database.
@@ -961,6 +991,31 @@ impl Client {
         Ok(if is_new { 1 } else { 0 })
     }
 
+    /// Sets a hash field with pre-converted field and value bytes.
+    /// Returns `1` if the field is new, `0` if the field was updated.
+    #[inline]
+    pub async fn hset_with_bytes(
+        &mut self,
+        key: &str,
+        field_b: Vec<u8>,
+        value_b: Vec<u8>,
+    ) -> RedisResult<i64> {
+        let is_new = if let Some(mut stored) = self.storage.data.get_mut(key) {
+            let data_ref = Arc::make_mut(&mut stored.data);
+            match data_ref {
+                RedisData::Hash(h) => h.insert(field_b, value_b).is_none(),
+                _ => return Err(RedisError::WrongType),
+            }
+        } else {
+            let mut h = FxHashMap::default();
+            h.reserve(200);
+            h.insert(field_b, value_b);
+            self.storage.set(key.to_string(), RedisData::Hash(h), None);
+            true
+        };
+        Ok(if is_new { 1 } else { 0 })
+    }
+
     /// Gets a field value from a hash.
     ///
     /// # Type Parameters
@@ -992,6 +1047,23 @@ impl Client {
             }
         } else {
             FromRedisValue::from_redis_value(Value::Null)
+        }
+    }
+
+    /// Gets a hash field with pre-converted field bytes (avoids value_to_vec allocation).
+    #[inline]
+    pub async fn hget_raw(&mut self, key: &str, field_b: Vec<u8>) -> Option<Vec<u8>> {
+        if let Some(stored) = self.storage.data.get(key) {
+            if stored.is_expired() {
+                self.storage.remove(key);
+                return None;
+            }
+            match &*stored.data {
+                RedisData::Hash(h) => h.get(&field_b).cloned(),
+                _ => None,
+            }
+        } else {
+            None
         }
     }
 

@@ -40,6 +40,11 @@ fn mixed_workload(c: &mut Criterion) {
             }
         });
 
+        // Pre-generate the 100 key/field strings to avoid format!() in the hot path
+        let keys: Vec<String> = (0..100).map(|i| format!("key{}", i)).collect();
+        let fields: Vec<String> = (0..100).map(|i| format!("field{}", i)).collect();
+        let value_bytes = b"value".to_vec();
+
         b.iter(|| {
             block_on(&rt, async {
                 // Do a batch of 1000 mixed operations
@@ -47,23 +52,23 @@ fn mixed_workload(c: &mut Criterion) {
                     match i % 10 {
                         0..=3 => {
                             // SET
-                            client.set(format!("key{}", i), "value").await.unwrap();
+                            client.set_with_bytes(format!("key{}", i), value_bytes.clone()).await.unwrap();
                         }
                         4..=7 => {
                             // GET
-                            let _: String = client.get(format!("key{}", i % 100)).await.unwrap();
+                            let _: String = client.get_string(keys[i % 100].clone()).await.unwrap();
                         }
                         8 => {
                             // HSET
                             client
-                                .hset("myhash", format!("field{}", i), "value")
+                                .hset_bytes("myhash".to_string(), format!("field{}", i).into_bytes(), value_bytes.clone())
                                 .await
                                 .unwrap();
                         }
                         9 => {
                             // HGET
                             let _: String = client
-                                .hget("myhash", format!("field{}", i % 100))
+                                .hget("myhash", fields[i % 100].clone())
                                 .await
                                 .unwrap();
                         }
