@@ -8,9 +8,9 @@ use std::time::Instant;
 const KEY_OVERHEAD: usize = 50;
 const COUNTER_INIT: u32 = 5;
 
-#[derive(Debug, Clone)]
 pub struct MemoryTracker {
     config: Arc<tokio::sync::RwLock<StorageConfig>>,
+    enabled: AtomicUsize, // 1 if enabled, 0 if disabled
     total_memory: AtomicUsize,
     lru_order: Arc<tokio::sync::RwLock<VecDeque<String>>>,
     access_counts: Arc<tokio::sync::RwLock<std::collections::HashMap<String, u32>>>,
@@ -20,6 +20,7 @@ impl MemoryTracker {
     pub fn new() -> Self {
         Self {
             config: Arc::new(tokio::sync::RwLock::new(StorageConfig::new())),
+            enabled: AtomicUsize::new(0),
             total_memory: AtomicUsize::new(0),
             lru_order: Arc::new(tokio::sync::RwLock::new(VecDeque::new())),
             access_counts: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
@@ -29,6 +30,11 @@ impl MemoryTracker {
     pub async fn set_maxmemory(&self, maxmemory: Option<usize>) {
         let mut config = self.config.write().await;
         config.maxmemory = maxmemory;
+        if maxmemory.is_some() {
+            self.enabled.store(1, Ordering::SeqCst);
+        } else {
+            self.enabled.store(0, Ordering::SeqCst);
+        }
     }
 
     pub async fn set_maxmemory_policy(&self, policy: MaxMemoryPolicy) {
@@ -55,17 +61,22 @@ impl MemoryTracker {
         config.maxmemory.is_some()
     }
 
+    pub fn is_enabled_sync(&self) -> bool {
+        self.enabled.load(Ordering::SeqCst) == 1
+    }
+
     pub async fn add_memory(&self, key: &str, value: &StoredValue) -> usize {
         let size = value.data.estimated_size() + key.len() + KEY_OVERHEAD;
         self.total_memory.fetch_add(size, Ordering::Relaxed);
-        self.update_access(key, value.expire_at.is_some()).await;
+        let has_ttl = value.expire_at.is_some();
+        self.update_access_sync(key, has_ttl);
         size
     }
 
     pub async fn remove_memory(&self, key: &str, value: &StoredValue) {
         let size = value.data.estimated_size() + key.len() + KEY_OVERHEAD;
         self.total_memory.fetch_sub(size, Ordering::Relaxed);
-        self.remove_from_tracking(key).await;
+        self.remove_from_tracking_sync(key);
     }
 
     pub async fn check_eviction_needed(&self) -> bool {
@@ -84,6 +95,15 @@ impl MemoryTracker {
         } else {
             false
         }
+    }
+
+    pub fn should_reject_write_sync(&self) -> bool {
+        if let Ok(config) = self.config.try_read() {
+            if let Some(limit) = config.maxmemory {
+                return self.total_memory.load(Ordering::Relaxed) >= limit && config.maxmemory_policy == MaxMemoryPolicy::NoEviction;
+            }
+        }
+        false
     }
 
     async fn update_access(&self, key: &str, has_ttl: bool) {
@@ -241,7 +261,58 @@ impl MemoryTracker {
     }
 
     pub async fn record_read(&self, key: &str) {
-        self.update_access(key, false).await;
+        let policy = self.get_policy_sync();
+        if matches!(policy, MaxMemoryPolicy::AllKeysLru | MaxMemoryPolicy::VolatileLru) {
+            if let Ok(mut lru) = self.lru_order.try_write() {
+                lru.retain(|k| k != key);
+                lru.push_back(key.to_string());
+            }
+        }
+
+        if matches!(policy, MaxMemoryPolicy::AllKeysLfu | MaxMemoryPolicy::VolatileLfu) {
+            if let Ok(mut counts) = self.access_counts.try_write() {
+                let counter = counts.entry(key.to_string()).or_insert(COUNTER_INIT);
+                *counter = counter.saturating_add(1);
+            }
+        }
+    }
+
+    fn update_access_sync(&self, key: &str, _has_ttl: bool) {
+        let policy = self.get_policy_sync();
+        
+        if matches!(policy, MaxMemoryPolicy::AllKeysLru | MaxMemoryPolicy::VolatileLru) {
+            if let Ok(mut lru) = self.lru_order.try_write() {
+                lru.retain(|k| k != key);
+                lru.push_back(key.to_string());
+            }
+        }
+
+        if matches!(policy, MaxMemoryPolicy::AllKeysLfu | MaxMemoryPolicy::VolatileLfu) {
+            if let Ok(mut counts) = self.access_counts.try_write() {
+                let counter = counts.entry(key.to_string()).or_insert(COUNTER_INIT);
+                *counter = counter.saturating_add(1);
+            }
+        }
+    }
+
+    fn remove_from_tracking_sync(&self, key: &str) {
+        if let Ok(mut lru) = self.lru_order.try_write() {
+            lru.retain(|k| k != key);
+        }
+        
+        if let Ok(mut counts): Result<_, _> = Ok(self.access_counts.try_write()) {
+            if let Ok(mut counts) = counts {
+                counts.remove(key);
+            }
+        }
+    }
+
+    fn get_policy_sync(&self) -> MaxMemoryPolicy {
+        if let Ok(config) = self.config.try_read() {
+            config.maxmemory_policy
+        } else {
+            MaxMemoryPolicy::NoEviction
+        }
     }
 }
 
