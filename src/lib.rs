@@ -298,8 +298,6 @@ impl StorageEngine {
         if let (Some(at), Some(key_expire)) = (expire_at, key_for_expire) {
             self.expiration.schedule(key_expire, at);
         }
-
-
     }
 
     /// Gets a value from the storage engine by key.
