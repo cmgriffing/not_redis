@@ -30,7 +30,7 @@ impl StorageEngine {
         let engine = Self {
             data: Arc::new(DashMap::with_hasher_and_shard_amount(
                 rustc_hash::FxBuildHasher::default(),
-                8,
+                16,
             )),
             expiration: ExpirationManager::new(sweep_interval_ms),
             memory: MemoryTracker::new(),
@@ -86,34 +86,15 @@ impl StorageEngine {
             return;
         }
 
-        if self.memory.should_reject_write_sync() {
-            return;
-        }
-
-        let old_value = self.data.get(key).cloned();
-        
-        let stored = StoredValue {
-            data: value,
-            expire_at,
-        };
-
-        if memory_enabled {
-            let old_size = old_value.as_ref().map(|v| v.estimated_size()).unwrap_or(0);
-            let new_size = stored.estimated_size();
-            
-            if new_size > old_size {
-                rt.block_on(async {
-                    while self.memory.check_eviction_needed().await {
-                        if let Some(evicted_key) = self.memory.evict_one(&|k| self.data.get(k).cloned()).await {
-                            if let Some(evicted) = self.data.remove(&evicted_key) {
-                                self.expiration.cancel_expiration(&evicted_key);
-                                self.memory.remove_memory(&evicted_key, &evicted).await;
-                            }
-                        } else {
-                            break;
-                        }
-                    }
-                });
+        match self.data.entry(key.to_string()) {
+            dashmap::mapref::entry::Entry::Occupied(mut entry) => {
+                if entry.get().expire_at.is_some() {
+                    self.expiration.cancel_expiration(entry.key());
+                }
+                entry.insert(StoredValue { data: value, expire_at });
+            }
+            dashmap::mapref::entry::Entry::Vacant(entry) => {
+                entry.insert(StoredValue { data: value, expire_at });
             }
         }
 
@@ -150,11 +131,12 @@ impl StorageEngine {
 
     pub fn remove(&self, key: &str) -> bool {
         let memory_enabled = self.memory.is_enabled_sync();
+        if !memory_enabled {
+            return self.data.remove(key).is_some();
+        }
         if let Some(old) = self.data.get(key) {
-            if memory_enabled {
-                let rt = tokio::runtime::Handle::current();
-                rt.block_on(self.memory.remove_memory(key, &old));
-            }
+            let rt = tokio::runtime::Handle::current();
+            rt.block_on(self.memory.remove_memory(key, &old));
         }
         
         self.expiration.cancel_expiration(key);
@@ -163,6 +145,34 @@ impl StorageEngine {
 
     pub fn exists(&self, key: &str) -> bool {
         self.data.contains_key(key)
+    }
+
+    pub fn set_no_replace(&self, key: &str, value: RedisData, expire_at: Option<Instant>) {
+        let memory_enabled = self.memory.is_enabled_sync();
+
+        if !memory_enabled {
+            self.data.insert(
+                key.to_string(),
+                StoredValue { data: value, expire_at },
+            );
+            return;
+        }
+
+        if self.memory.should_reject_write_sync() {
+            return;
+        }
+
+        match self.data.entry(key.to_string()) {
+            dashmap::mapref::entry::Entry::Occupied(mut entry) => {
+                if entry.get().expire_at.is_some() {
+                    self.expiration.cancel_expiration(entry.key());
+                }
+                entry.insert(StoredValue { data: value, expire_at });
+            }
+            dashmap::mapref::entry::Entry::Vacant(entry) => {
+                entry.insert(StoredValue { data: value, expire_at });
+            }
+        }
     }
 
     pub fn len(&self) -> usize {
