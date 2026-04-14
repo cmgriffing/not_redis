@@ -97,7 +97,11 @@ impl StorageEngine {
                 if entry.get().expire_at.is_some() {
                     self.expiration.cancel_expiration(entry.key());
                 }
-                entry.insert(StoredValue { data: value, expire_at });
+                // Use get_mut to update in-place, avoiding a full StoredValue reallocation
+                if let Some(mut stored) = entry.get_mut() {
+                    stored.data = Arc::new(value);
+                    stored.expire_at = expire_at;
+                }
             }
             dashmap::mapref::entry::Entry::Vacant(entry) => {
                 entry.insert(StoredValue { data: value, expire_at });
@@ -108,9 +112,11 @@ impl StorageEngine {
     pub fn get(&self, key: &str) -> Option<StoredValue> {
         let value = self.data.get(key).map(|v| v.clone());
         
-        if value.is_some() && self.memory.is_enabled_sync() {
-            let rt = tokio::runtime::Handle::current();
-            rt.block_on(self.memory.record_read(key));
+        if value.is_some() {
+            if self.memory.is_enabled_sync() {
+                let rt = tokio::runtime::Handle::current();
+                rt.block_on(self.memory.record_read(key));
+            }
         }
         
         value
@@ -154,7 +160,11 @@ impl StorageEngine {
                 if entry.get().expire_at.is_some() {
                     self.expiration.cancel_expiration(entry.key());
                 }
-                entry.insert(StoredValue { data: value, expire_at });
+                // Use get_mut to update in-place, avoiding a full StoredValue reallocation
+                if let Some(mut stored) = entry.get_mut() {
+                    stored.data = Arc::new(value);
+                    stored.expire_at = expire_at;
+                }
             }
             dashmap::mapref::entry::Entry::Vacant(entry) => {
                 entry.insert(StoredValue { data: value, expire_at });
