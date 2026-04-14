@@ -876,6 +876,27 @@ impl Client {
         }
     }
 
+    /// Gets a value by string key (optimized for &str input).
+    #[inline]
+    pub async fn get_str<RV>(&mut self, key: &str) -> RedisResult<RV>
+    where
+        RV: FromRedisValue,
+    {
+        if let Some(stored) = self.storage.data.get(key) {
+            if stored.is_expired() {
+                drop(stored);
+                self.storage.remove(key);
+                return FromRedisValue::from_redis_value(Value::Null);
+            }
+            match &*stored.data {
+                RedisData::String(s) => RV::from_redis_value(Value::String(s.clone())),
+                _ => Err(RedisError::WrongType),
+            }
+        } else {
+            FromRedisValue::from_redis_value(Value::Null)
+        }
+    }
+
     /// Deletes one or more keys from the database.
     ///
     /// Returns the number of keys that were deleted.

@@ -59,8 +59,8 @@ fn mixed_workload(c: &mut Criterion) {
                             client.set_with_bytes(set_keys[i].clone(), value_bytes.clone()).await.unwrap();
                         }
                         4..=7 => {
-                            // GET - use fast path with pre-allocated key
-                            let _: String = client.get_string(get_keys[i % 100].clone()).await.unwrap();
+                            // GET - use fast path with &str to avoid String clone
+                            let _: String = client.get_str(&get_keys[i % 100]).await.unwrap();
                         }
                         8 => {
                             // HSET - use fast path with pre-allocated field and value
