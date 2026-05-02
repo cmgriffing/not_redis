@@ -32,7 +32,7 @@ impl StorageEngine {
         let engine = Self {
             data: Arc::new(DashMap::with_hasher_and_shard_amount(
                 rustc_hash::FxBuildHasher::default(),
-                32,
+                16,
             )),
             expiration: ExpirationManager::new(sweep_interval_ms),
             high_water_mark: Arc::new(AtomicUsize::new(0)),
@@ -49,7 +49,7 @@ impl StorageEngine {
         let mut engine = Self {
             data: Arc::new(DashMap::with_hasher_and_shard_amount(
                 rustc_hash::FxBuildHasher::default(),
-                32,
+                16,
             )),
             expiration: ExpirationManager::new(100),
             memory: MemoryTracker::new(),
