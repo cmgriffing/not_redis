@@ -223,7 +223,7 @@ impl StorageEngine {
         Self {
             data: Arc::new(DashMap::with_hasher_and_shard_amount(
                 FxBuildHasher::default(),
-                16,
+                2,
             )),
             expiration: ExpirationManager::new(100),
             high_water_mark: Arc::new(AtomicUsize::new(0)),
