@@ -45,8 +45,12 @@ fn mixed_workload(c: &mut Criterion) {
         let get_keys: Vec<String> = (0..100).map(|i| format!("key{}", i)).collect();
         let set_keys: Vec<String> = (0..1000).map(|i| format!("key{}", i)).collect();
         let hget_fields: Vec<String> = (0..100).map(|i| format!("field{}", i)).collect();
-        let hget_fields_bytes: Vec<Vec<u8>> = (0..100).map(|i| format!("field{}", i).into_bytes()).collect();
-        let hset_fields: Vec<Vec<u8>> = (0..1000).map(|i| format!("field{}", i).into_bytes()).collect();
+        let hget_fields_bytes: Vec<Vec<u8>> = (0..100)
+            .map(|i| format!("field{}", i).into_bytes())
+            .collect();
+        let hset_fields: Vec<Vec<u8>> = (0..1000)
+            .map(|i| format!("field{}", i).into_bytes())
+            .collect();
         let value_bytes = b"value".to_vec();
 
         b.iter(|| {
@@ -56,7 +60,10 @@ fn mixed_workload(c: &mut Criterion) {
                     match i % 10 {
                         0..=3 => {
                             // SET - use fast path with pre-allocated key and value
-                            client.set_with_bytes(set_keys[i].clone(), value_bytes.clone()).await.unwrap();
+                            client
+                                .set_with_bytes(set_keys[i].clone(), value_bytes.clone())
+                                .await
+                                .unwrap();
                         }
                         4..=7 => {
                             // GET - use fast path with &str to avoid String clone
@@ -65,7 +72,11 @@ fn mixed_workload(c: &mut Criterion) {
                         8 => {
                             // HSET - use fast path with pre-allocated field and value
                             client
-                                .hset_bytes("myhash".to_string(), hset_fields[i].clone(), value_bytes.clone())
+                                .hset_bytes(
+                                    "myhash".to_string(),
+                                    hset_fields[i].clone(),
+                                    value_bytes.clone(),
+                                )
                                 .await
                                 .unwrap();
                         }

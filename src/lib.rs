@@ -1071,7 +1071,11 @@ impl Client {
 
     /// Gets a hash field with pre-converted field bytes.
     #[inline]
-    pub async fn hget_with_bytes<K: Into<String>, RV>(&mut self, key: K, field_b: Vec<u8>) -> RedisResult<RV>
+    pub async fn hget_with_bytes<K: Into<String>, RV>(
+        &mut self,
+        key: K,
+        field_b: Vec<u8>,
+    ) -> RedisResult<RV>
     where
         RV: FromRedisValue,
     {
