@@ -109,16 +109,17 @@ impl StorageEngine {
         }
     }
 
+    #[inline]
     pub fn get(&self, key: &str) -> Option<StoredValue> {
-        let value = self.data.get(key).map(|v| v.clone());
-        
-        if value.is_some() {
-            if self.memory.is_enabled_sync() {
-                let rt = tokio::runtime::Handle::current();
-                rt.block_on(self.memory.record_read(key));
-            }
+        if !self.memory.is_enabled_sync() {
+            return self.data.get(key).map(|v| v.clone());
         }
-        
+
+        let value = self.data.get(key).map(|v| v.clone());
+        if value.is_some() {
+            let rt = tokio::runtime::Handle::current();
+            rt.block_on(self.memory.record_read(key));
+        }
         value
     }
 
