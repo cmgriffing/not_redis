@@ -11,16 +11,18 @@ use super::types::{RedisData, StoredValue};
 use super::expire::ExpirationManager;
 
 /// The core storage engine for the Redis-like store.
-/// 
+///
 /// Uses a concurrent hash map ([`DashMap`]) for thread-safe access
 /// and supports key expiration with a background sweeper task.
 #[derive(Clone)]
 pub struct StorageEngine {
     data: Arc<DashMap<String, StoredValue>>,
     expiration: ExpirationManager,
-    memory: MemoryTracker,
+    high_water_mark: Arc<AtomicUsize>,
+    current_len: Arc<AtomicUsize>,
 }
 
+#[allow(missing_docs)]
 impl StorageEngine {
     pub fn new() -> Self {
         Self::new_with_sweep_interval(100)
@@ -28,20 +30,27 @@ impl StorageEngine {
 
     pub fn new_with_sweep_interval(sweep_interval_ms: u64) -> Self {
         let engine = Self {
-            data: Arc::new(DashMap::new()),
+            data: Arc::new(DashMap::with_hasher_and_shard_amount(
+                rustc_hash::FxBuildHasher::default(),
+                1,
+            )),
             expiration: ExpirationManager::new(sweep_interval_ms),
-            memory: MemoryTracker::new(),
+            high_water_mark: Arc::new(AtomicUsize::new(0)),
+            current_len: Arc::new(AtomicUsize::new(0)),
         };
         engine
     }
 
-    pub fn new(sweep_interval_ms: u64) -> Self {
-        Self::new_with_sweep_interval(sweep_interval_ms)
+    pub fn new() -> Self {
+        Self::new_with_sweep_interval(100)
     }
 
     pub fn with_config(config: StorageConfig) -> Self {
         let mut engine = Self {
-            data: Arc::new(DashMap::new()),
+            data: Arc::new(DashMap::with_hasher_and_shard_amount(
+                rustc_hash::FxBuildHasher::default(),
+                1,
+            )),
             expiration: ExpirationManager::new(100),
             memory: MemoryTracker::new(),
         };
@@ -69,61 +78,34 @@ impl StorageEngine {
     }
 
     pub fn set(&self, key: &str, value: RedisData, expire_at: Option<Instant>) {
-        let rt = tokio::runtime::Handle::current();
+        let memory_enabled = self.memory.is_enabled_sync();
         
-        let memory_enabled = rt.block_on(self.memory.is_enabled());
-        
-        if memory_enabled && rt.block_on(self.memory.should_reject_write()) {
+        if !memory_enabled {
+            self.data.insert(
+                key.to_string(),
+                StoredValue { data: value, expire_at },
+            );
             return;
         }
 
-        let old_value = self.data.get(key).cloned();
-        
-        let stored = StoredValue {
-            data: value,
-            expire_at,
-        };
+        if self.memory.should_reject_write_sync() {
+            return;
+        }
 
-        if memory_enabled {
-            let memory_delta = stored.estimated_size() - old_value.as_ref().map(|v| v.estimated_size()).unwrap_or(0);
-            
-            rt.block_on(async {
-                if memory_delta > 0 {
-                    while self.memory.check_eviction_needed().await {
-                        if let Some(evicted_key) = self.memory.evict_one(&|k| self.data.get(k).cloned()).await {
-                            if let Some(evicted) = self.data.remove(&evicted_key) {
-                                self.expiration.cancel_expiration(&evicted_key);
-                                self.memory.remove_memory(&evicted_key, &evicted).await;
-                            }
-                        } else {
-                            break;
-                        }
-                    }
+        match self.data.entry(key.to_string()) {
+            dashmap::mapref::entry::Entry::Occupied(mut entry) => {
+                if entry.get().expire_at.is_some() {
+                    self.expiration.cancel_expiration(entry.key());
                 }
-            });
-        }
-
-        if let Some(ref old) = old_value {
-            if old.expire_at.is_some() {
-                self.expiration.cancel_expiration(key);
-            }
-            if memory_enabled {
-                rt.block_on(self.memory.remove_memory(key, old));
-            }
-        }
-
-        self.data.insert(key.to_string(), stored);
-
-        if let Some(at) = expire_at {
-            self.expiration.schedule_expiration(key.to_string(), at);
-        }
-        
-        if memory_enabled {
-            rt.block_on(async {
-                if let Some(new_value) = self.data.get(key) {
-                    self.memory.add_memory(key, &new_value).await;
+                // Use get_mut to update in-place, avoiding a full StoredValue reallocation
+                if let Some(mut stored) = entry.get_mut() {
+                    stored.data = Arc::new(value);
+                    stored.expire_at = expire_at;
                 }
-            });
+            }
+            dashmap::mapref::entry::Entry::Vacant(entry) => {
+                entry.insert(StoredValue { data: value, expire_at });
+            }
         }
     }
 
@@ -131,8 +113,8 @@ impl StorageEngine {
         let value = self.data.get(key).map(|v| v.clone());
         
         if value.is_some() {
-            let rt = tokio::runtime::Handle::current();
-            if rt.block_on(self.memory.is_enabled()) {
+            if self.memory.is_enabled_sync() {
+                let rt = tokio::runtime::Handle::current();
                 rt.block_on(self.memory.record_read(key));
             }
         }
@@ -141,11 +123,13 @@ impl StorageEngine {
     }
 
     pub fn remove(&self, key: &str) -> bool {
+        let memory_enabled = self.memory.is_enabled_sync();
+        if !memory_enabled {
+            return self.data.remove(key).is_some();
+        }
         if let Some(old) = self.data.get(key) {
             let rt = tokio::runtime::Handle::current();
-            if rt.block_on(self.memory.is_enabled()) {
-                rt.block_on(self.memory.remove_memory(key, &old));
-            }
+            rt.block_on(self.memory.remove_memory(key, &old));
         }
         
         self.expiration.cancel_expiration(key);
@@ -154,6 +138,38 @@ impl StorageEngine {
 
     pub fn exists(&self, key: &str) -> bool {
         self.data.contains_key(key)
+    }
+
+    pub fn set_no_replace(&self, key: &str, value: RedisData, expire_at: Option<Instant>) {
+        let memory_enabled = self.memory.is_enabled_sync();
+
+        if !memory_enabled {
+            self.data.insert(
+                key.to_string(),
+                StoredValue { data: value, expire_at },
+            );
+            return;
+        }
+
+        if self.memory.should_reject_write_sync() {
+            return;
+        }
+
+        match self.data.entry(key.to_string()) {
+            dashmap::mapref::entry::Entry::Occupied(mut entry) => {
+                if entry.get().expire_at.is_some() {
+                    self.expiration.cancel_expiration(entry.key());
+                }
+                // Use get_mut to update in-place, avoiding a full StoredValue reallocation
+                if let Some(mut stored) = entry.get_mut() {
+                    stored.data = Arc::new(value);
+                    stored.expire_at = expire_at;
+                }
+            }
+            dashmap::mapref::entry::Entry::Vacant(entry) => {
+                entry.insert(StoredValue { data: value, expire_at });
+            }
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -170,14 +186,14 @@ impl StorageEngine {
 
     pub fn flush(&self) {
         self.data.clear();
-        self.expiration.clear_all();
+        self.expiration.clear();
     }
 
     pub fn set_expiry(&self, key: &str, duration: Duration) -> bool {
         if let Some(mut entry) = self.data.get_mut(key) {
-            let expire_at = Instant::now() + duration;
-            entry.expire_at = Some(expire_at);
-            self.expiration.schedule_expiration(key.to_string(), expire_at);
+            let at = Instant::now() + duration;
+            entry.expire_at = Some(at);
+            self.expiration.schedule(key.to_string(), at);
             return true;
         }
         false
@@ -186,7 +202,7 @@ impl StorageEngine {
     pub fn persist(&self, key: &str) -> bool {
         if let Some(mut entry) = self.data.get_mut(key) {
             entry.expire_at = None;
-            self.expiration.cancel_expiration(key);
+            self.expiration.cancel(key);
             return true;
         }
         false
@@ -209,7 +225,7 @@ impl StorageEngine {
         let entry = (new_id.clone(), values);
 
         if let Some(mut stored) = self.data.get_mut(key) {
-            match &mut stored.data {
+            match Arc::make_mut(&mut stored.data) {
                 RedisData::Stream(entries) => {
                     entries.push(entry);
                     Some(new_id)
@@ -225,7 +241,7 @@ impl StorageEngine {
 
     pub fn xlen(&self, key: &str) -> Option<usize> {
         self.data.get(key).map(|stored| {
-            match &stored.data {
+            match &*stored.data {
                 RedisData::Stream(entries) => entries.len(),
                 _ => 0,
             }
@@ -234,7 +250,7 @@ impl StorageEngine {
 
     pub fn xtrim(&self, key: &str, maxlen: usize, approximate: bool) -> Option<usize> {
         if let Some(mut stored) = self.data.get_mut(key) {
-            match &mut stored.data {
+            match Arc::make_mut(&mut stored.data) {
                 RedisData::Stream(entries) => {
                     let original_len = entries.len();
                     if entries.len() > maxlen {
@@ -255,7 +271,7 @@ impl StorageEngine {
 
     pub fn xdel(&self, key: &str, entry_ids: Vec<&[u8]>) -> Option<usize> {
         if let Some(mut stored) = self.data.get_mut(key) {
-            match &mut stored.data {
+            match Arc::make_mut(&mut stored.data) {
                 RedisData::Stream(entries) => {
                     let original_len = entries.len();
                     entries.retain(|(id, _)| {
@@ -271,7 +287,7 @@ impl StorageEngine {
 
     pub fn xrange(&self, key: &str, start: &[u8], end: &[u8], count: Option<usize>) -> Option<Vec<(Vec<u8>, Vec<(Vec<u8>, Vec<u8>)>)>> {
         self.data.get(key).map(|stored| {
-            match &stored.data {
+            match &*stored.data {
                 RedisData::Stream(entries) => {
                     let mut result: Vec<_> = entries.iter()
                         .filter(|(id, _)| {
@@ -300,31 +316,12 @@ impl StorageEngine {
     }
 
     fn generate_stream_id(&self) -> Vec<u8> {
+        use std::time::{SystemTime, UNIX_EPOCH};
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_millis() as u64;
         format!("{}-0", timestamp).into_bytes()
-    }
-
-    pub async fn set_maxmemory(&self, maxmemory: usize) {
-        self.memory.set_maxmemory(Some(maxmemory)).await;
-    }
-
-    pub async fn set_maxmemory_policy(&self, policy: MaxMemoryPolicy) {
-        self.memory.set_maxmemory_policy(policy).await;
-    }
-
-    pub async fn get_maxmemory(&self) -> Option<usize> {
-        self.memory.get_maxmemory().await
-    }
-
-    pub async fn get_maxmemory_policy(&self) -> MaxMemoryPolicy {
-        self.memory.get_maxmemory_policy().await
-    }
-
-    pub fn current_memory_usage(&self) -> usize {
-        self.memory.current_memory()
     }
 }
 
