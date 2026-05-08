@@ -886,13 +886,13 @@ impl Client {
     /// * `K` - The key type (must be convertible to `String`)
     /// * `V` - The value type
     #[inline]
-    pub async fn set<K: Into<String>, V>(&mut self, key: K, value: V) -> RedisResult<()>
+    pub async fn set<K: AsRef<str>, V>(&mut self, key: K, value: V) -> RedisResult<()>
     where
         V: ToRedisArgs,
     {
-        let key_str = key.into();
         let val = Self::value_to_vec(&value);
-        self.storage.set(key_str, RedisData::String(val), None);
+        self.storage
+            .set_persistent(key.as_ref(), RedisData::String(val));
         Ok(())
     }
 
