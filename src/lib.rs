@@ -54,7 +54,6 @@ use rustc_hash::{FxHashMap, FxHashSet, FxHasher};
 use smallvec::smallvec;
 use std::collections::{BTreeMap, VecDeque};
 use std::hash::BuildHasherDefault;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use thiserror::Error;
@@ -209,8 +208,6 @@ type FxBuildHasher = BuildHasherDefault<FxHasher>;
 pub struct StorageEngine {
     data: Arc<DashMap<String, StoredValue, FxBuildHasher>>,
     expiration: ExpirationManager,
-    high_water_mark: Arc<AtomicUsize>,
-    current_len: Arc<AtomicUsize>,
 }
 
 #[allow(missing_docs)]
@@ -226,8 +223,6 @@ impl StorageEngine {
                 2,
             )),
             expiration: ExpirationManager::new(100),
-            high_water_mark: Arc::new(AtomicUsize::new(0)),
-            current_len: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -288,10 +283,6 @@ impl StorageEngine {
                     data: Arc::new(value),
                     expire_at,
                 });
-                // Increment current length counter for new key
-                let new_len = self.current_len.fetch_add(1, Ordering::Relaxed) + 1;
-                // Update high-water mark when new keys are added
-                self.high_water_mark.fetch_max(new_len, Ordering::Relaxed);
             }
         }
 
@@ -313,34 +304,15 @@ impl StorageEngine {
     /// Also removes any scheduled expiration for the key.
     pub fn remove(&self, key: &str) -> bool {
         self.expiration.cancel(key);
-        let removed = self.data.remove(key).is_some();
-        if removed {
-            self.current_len.fetch_sub(1, Ordering::Relaxed);
-            self.maybe_compact();
-        }
-        removed
+        self.data.remove(key).is_some()
     }
 
     /// Compacts the storage engine by shrinking the DashMap's internal allocations.
     ///
     /// This reclaims memory from removed entries by shrinking each shard's
-    /// backing storage to fit only the current entries. The high-water mark
-    /// is reset to the current number of entries.
+    /// backing storage to fit only the current entries.
     pub fn compact(&self) {
         self.data.shrink_to_fit();
-        self.high_water_mark
-            .store(self.current_len.load(Ordering::Relaxed), Ordering::Relaxed);
-    }
-
-    fn maybe_compact(&self) {
-        let hwm = self.high_water_mark.load(Ordering::Relaxed);
-        if hwm == 0 {
-            return;
-        }
-        let current_len = self.current_len.load(Ordering::Relaxed);
-        if current_len * 4 < hwm {
-            self.compact();
-        }
     }
 
     /// Checks if a key exists in the storage engine.
@@ -367,8 +339,6 @@ impl StorageEngine {
     pub fn flush(&self) {
         self.data.clear();
         self.expiration.clear();
-        self.high_water_mark.store(0, Ordering::Relaxed);
-        self.current_len.store(0, Ordering::Relaxed);
     }
 
     /// Sets an expiration time on an existing key.
@@ -612,11 +582,28 @@ impl Default for StorageEngine {
 #[allow(missing_docs)]
 pub trait ToRedisArgs {
     fn to_redis_args(&self) -> smallvec::SmallVec<[Value; 1]>;
+
+    fn to_arg_bytes(&self) -> Vec<u8> {
+        let args = self.to_redis_args();
+        for arg in args {
+            match arg {
+                Value::String(s) => return s,
+                Value::Int(n) => return n.to_string().into_bytes(),
+                Value::Bool(b) => return if b { b"1".to_vec() } else { b"0".to_vec() },
+                _ => {}
+            }
+        }
+        Vec::new()
+    }
 }
 
 impl ToRedisArgs for String {
     fn to_redis_args(&self) -> smallvec::SmallVec<[Value; 1]> {
         smallvec![Value::String(self.as_bytes().to_vec())]
+    }
+
+    fn to_arg_bytes(&self) -> Vec<u8> {
+        self.as_bytes().to_vec()
     }
 }
 
@@ -624,11 +611,19 @@ impl ToRedisArgs for &str {
     fn to_redis_args(&self) -> smallvec::SmallVec<[Value; 1]> {
         smallvec![Value::String(self.as_bytes().to_vec())]
     }
+
+    fn to_arg_bytes(&self) -> Vec<u8> {
+        self.as_bytes().to_vec()
+    }
 }
 
 impl ToRedisArgs for Vec<u8> {
     fn to_redis_args(&self) -> smallvec::SmallVec<[Value; 1]> {
         smallvec![Value::String(self.clone())]
+    }
+
+    fn to_arg_bytes(&self) -> Vec<u8> {
+        self.clone()
     }
 }
 
@@ -636,11 +631,19 @@ impl ToRedisArgs for i64 {
     fn to_redis_args(&self) -> smallvec::SmallVec<[Value; 1]> {
         smallvec![Value::Int(*self)]
     }
+
+    fn to_arg_bytes(&self) -> Vec<u8> {
+        self.to_string().into_bytes()
+    }
 }
 
 impl ToRedisArgs for u64 {
     fn to_redis_args(&self) -> smallvec::SmallVec<[Value; 1]> {
         smallvec![Value::Int(*self as i64)]
+    }
+
+    fn to_arg_bytes(&self) -> Vec<u8> {
+        self.to_string().into_bytes()
     }
 }
 
@@ -648,17 +651,33 @@ impl ToRedisArgs for isize {
     fn to_redis_args(&self) -> smallvec::SmallVec<[Value; 1]> {
         smallvec![Value::Int(*self as i64)]
     }
+
+    fn to_arg_bytes(&self) -> Vec<u8> {
+        self.to_string().into_bytes()
+    }
 }
 
 impl ToRedisArgs for usize {
     fn to_redis_args(&self) -> smallvec::SmallVec<[Value; 1]> {
         smallvec![Value::Int(*self as i64)]
     }
+
+    fn to_arg_bytes(&self) -> Vec<u8> {
+        self.to_string().into_bytes()
+    }
 }
 
 impl ToRedisArgs for bool {
     fn to_redis_args(&self) -> smallvec::SmallVec<[Value; 1]> {
         smallvec![Value::Bool(*self)]
+    }
+
+    fn to_arg_bytes(&self) -> Vec<u8> {
+        if *self {
+            b"1".to_vec()
+        } else {
+            b"0".to_vec()
+        }
     }
 }
 
@@ -667,6 +686,13 @@ impl<T: ToRedisArgs> ToRedisArgs for Option<T> {
         match self {
             Some(v) => v.to_redis_args(),
             None => smallvec![Value::Null],
+        }
+    }
+
+    fn to_arg_bytes(&self) -> Vec<u8> {
+        match self {
+            Some(v) => v.to_arg_bytes(),
+            None => Vec::new(),
         }
     }
 }
@@ -808,16 +834,16 @@ impl Client {
     /// # Type Parameters
     /// * `K` - The key type (must be convertible to `String`)
     /// * `RV` - The return value type (must implement [`FromRedisValue`])
-    pub async fn get<K: Into<String>, RV>(&mut self, key: K) -> RedisResult<RV>
+    pub async fn get<K: AsRef<str>, RV>(&mut self, key: K) -> RedisResult<RV>
     where
         RV: FromRedisValue,
     {
-        let key_str = key.into();
-        if let Some(stored) = self.storage.data.get(&key_str) {
+        let key_str = key.as_ref();
+        if let Some(stored) = self.storage.data.get(key_str) {
             if stored.is_expired() {
                 // Drop the Ref before removing to avoid potential deadlock
                 drop(stored);
-                self.storage.remove(&key_str);
+                self.storage.remove(key_str);
                 return FromRedisValue::from_redis_value(Value::Null);
             }
             match &*stored.data {
@@ -1180,8 +1206,7 @@ impl Client {
         let key_str = key.into();
         let val_b = Self::value_to_vec(&value);
         let len = if let Some(mut stored) = self.storage.data.get_mut(&key_str) {
-            let data_ref = Arc::make_mut(&mut stored.data);
-            match data_ref {
+            match Arc::make_mut(&mut stored.data) {
                 RedisData::List(l) => {
                     l.push_front(val_b);
                     l.len() as i64
@@ -1189,9 +1214,15 @@ impl Client {
                 _ => return Err(RedisError::WrongType),
             }
         } else {
-            let mut l = VecDeque::new();
+            let mut l = VecDeque::with_capacity(1);
             l.push_front(val_b);
-            self.storage.set(key_str, RedisData::List(l), None);
+            self.storage.data.insert(
+                key_str,
+                StoredValue {
+                    data: Arc::new(RedisData::List(l)),
+                    expire_at: None,
+                },
+            );
             1
         };
         Ok(len)
@@ -1207,8 +1238,7 @@ impl Client {
         let key_str = key.into();
         let val_b = Self::value_to_vec(&value);
         let len = if let Some(mut stored) = self.storage.data.get_mut(&key_str) {
-            let data_ref = Arc::make_mut(&mut stored.data);
-            match data_ref {
+            match Arc::make_mut(&mut stored.data) {
                 RedisData::List(l) => {
                     l.push_back(val_b);
                     l.len() as i64
@@ -1216,9 +1246,15 @@ impl Client {
                 _ => return Err(RedisError::WrongType),
             }
         } else {
-            let mut l = VecDeque::new();
+            let mut l = VecDeque::with_capacity(1);
             l.push_back(val_b);
-            self.storage.set(key_str, RedisData::List(l), None);
+            self.storage.data.insert(
+                key_str,
+                StoredValue {
+                    data: Arc::new(RedisData::List(l)),
+                    expire_at: None,
+                },
+            );
             1
         };
         Ok(len)
@@ -1229,13 +1265,13 @@ impl Client {
     /// Returns `0` if the key doesn't exist or is not a list.
     pub async fn llen<K>(&mut self, key: K) -> RedisResult<i64>
     where
-        K: ToRedisArgs,
+        K: AsRef<str>,
     {
-        let key_str = Self::key_to_string(&key);
-        if let Some(stored) = self.storage.data.get(&key_str) {
+        let key_str = key.as_ref();
+        if let Some(stored) = self.storage.data.get(key_str) {
             if stored.is_expired() {
                 drop(stored);
-                self.storage.remove(&key_str);
+                self.storage.remove(key_str);
                 return Ok(0);
             }
             match &*stored.data {
@@ -1263,7 +1299,7 @@ impl Client {
                     let added = s.insert(member_b);
                     Ok(if added { 1 } else { 0 })
                 }
-                _ => return Err(RedisError::WrongType),
+                _ => Err(RedisError::WrongType),
             }
         } else {
             let mut s = FxHashSet::default();
@@ -1505,16 +1541,7 @@ impl Client {
 
     #[inline]
     fn value_to_vec<V: ToRedisArgs>(v: &V) -> Vec<u8> {
-        let args = v.to_redis_args();
-        for arg in args {
-            match arg {
-                Value::String(s) => return s,
-                Value::Int(n) => return n.to_string().into_bytes(),
-                Value::Bool(b) => return (if b { "1" } else { "0" }).to_string().into_bytes(),
-                _ => {}
-            }
-        }
-        Vec::new()
+        v.to_arg_bytes()
     }
 }
 
@@ -1625,7 +1652,7 @@ mod tests {
     }
 
     #[test]
-    fn test_compact_resets_high_water_mark() {
+    fn test_compact_after_removes_preserves_remaining_data() {
         let engine = StorageEngine::new();
         for i in 0..100 {
             engine.set(
@@ -1634,64 +1661,24 @@ mod tests {
                 None,
             );
         }
-        assert_eq!(engine.high_water_mark.load(Ordering::Relaxed), 100);
 
-        // Remove some keys without triggering auto-compact (50 >= 25% of 100)
         for i in 50..100 {
             engine.remove(&format!("key{}", i));
         }
         assert_eq!(engine.len(), 50);
 
-        // Manual compact should reset high-water mark
         engine.compact();
-        assert_eq!(engine.high_water_mark.load(Ordering::Relaxed), 50);
-    }
-
-    #[test]
-    fn test_auto_compaction_on_remove() {
-        let engine = StorageEngine::new();
-        for i in 0..100 {
-            engine.set(
-                &format!("key{}", i),
-                RedisData::String(b"val".to_vec()),
-                None,
-            );
-        }
-        assert_eq!(engine.high_water_mark.load(Ordering::Relaxed), 100);
-
-        // Remove keys until len < 25% of high-water mark (below 25)
-        for i in 0..76 {
-            engine.remove(&format!("key{}", i));
-        }
-
-        // After auto-compaction triggered, high-water mark should be reset
-        assert_eq!(engine.len(), 24);
-        assert_eq!(engine.high_water_mark.load(Ordering::Relaxed), 24);
-    }
-
-    #[test]
-    fn test_no_auto_compaction_above_threshold() {
-        let engine = StorageEngine::new();
-        for i in 0..100 {
-            engine.set(
-                &format!("key{}", i),
-                RedisData::String(b"val".to_vec()),
-                None,
-            );
-        }
-
-        // Remove only 50 keys — 50 remaining is >= 25% of 100
-        for i in 0..50 {
-            engine.remove(&format!("key{}", i));
-        }
-
-        // High-water mark should NOT have been reset
         assert_eq!(engine.len(), 50);
-        assert_eq!(engine.high_water_mark.load(Ordering::Relaxed), 100);
+        for i in 0..50 {
+            assert!(engine.exists(&format!("key{}", i)));
+        }
+        for i in 50..100 {
+            assert!(!engine.exists(&format!("key{}", i)));
+        }
     }
 
     #[test]
-    fn test_flush_resets_high_water_mark() {
+    fn test_flush_clears_data() {
         let engine = StorageEngine::new();
         for i in 0..50 {
             engine.set(
@@ -1700,10 +1687,9 @@ mod tests {
                 None,
             );
         }
-        assert_eq!(engine.high_water_mark.load(Ordering::Relaxed), 50);
+        assert_eq!(engine.len(), 50);
 
         engine.flush();
-        assert_eq!(engine.high_water_mark.load(Ordering::Relaxed), 0);
         assert_eq!(engine.len(), 0);
     }
 }
