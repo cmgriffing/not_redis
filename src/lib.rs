@@ -161,6 +161,7 @@ pub struct StoredValue {
 
 #[allow(missing_docs)]
 impl StoredValue {
+    #[inline(always)]
     pub fn is_expired(&self) -> bool {
         self.expire_at.is_some_and(|at| Instant::now() >= at)
     }
@@ -261,6 +262,7 @@ impl StorageEngine {
     /// * `key` - The key to store
     /// * `value` - The data to store
     /// * `expire_at` - Optional expiration time
+    #[inline]
     pub fn set(&self, key: impl Into<String>, value: RedisData, expire_at: Option<Instant>) {
         let key = key.into();
         // If expiration is set, we will need the key later to schedule.
@@ -834,6 +836,7 @@ impl Client {
     /// # Type Parameters
     /// * `K` - The key type (must be convertible to `String`)
     /// * `RV` - The return value type (must implement [`FromRedisValue`])
+    #[inline(always)]
     pub async fn get<K: AsRef<str>, RV>(&mut self, key: K) -> RedisResult<RV>
     where
         RV: FromRedisValue,
