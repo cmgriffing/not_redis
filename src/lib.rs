@@ -292,9 +292,32 @@ impl StorageEngine {
         }
     }
 
+    #[inline]
+    fn set_persistent(&self, key: &str, value: RedisData) {
+        if let Some(mut stored) = self.data.get_mut(key) {
+            let had_expiration = stored.expire_at.is_some();
+            stored.data = Arc::new(value);
+            stored.expire_at = None;
+            drop(stored);
+            if had_expiration {
+                self.expiration.cancel(key);
+            }
+            return;
+        }
+
+        self.data.insert(
+            key.to_string(),
+            StoredValue {
+                data: Arc::new(value),
+                expire_at: None,
+            },
+        );
+    }
+
     /// Gets a value from the storage engine by key.
     ///
     /// Returns the stored value if the key exists and has not expired.
+    #[inline(always)]
     pub fn get(&self, key: &str) -> Option<StoredValue> {
         self.data.get(key).map(|v| v.clone())
     }
