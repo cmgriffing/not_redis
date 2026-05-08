@@ -275,10 +275,9 @@ impl StorageEngine {
                 if entry.get().expire_at.is_some() {
                     self.expiration.cancel(entry.key());
                 }
-                entry.insert(StoredValue {
-                    data: Arc::new(value),
-                    expire_at,
-                });
+                let stored = entry.get_mut();
+                stored.data = Arc::new(value);
+                stored.expire_at = expire_at;
             }
             dashmap::mapref::entry::Entry::Vacant(entry) => {
                 entry.insert(StoredValue {
