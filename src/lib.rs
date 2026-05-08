@@ -275,9 +275,10 @@ impl StorageEngine {
                 if entry.get().expire_at.is_some() {
                     self.expiration.cancel(entry.key());
                 }
-                let stored = entry.get_mut();
-                stored.data = Arc::new(value);
-                stored.expire_at = expire_at;
+                entry.insert(StoredValue {
+                    data: Arc::new(value),
+                    expire_at,
+                });
             }
             dashmap::mapref::entry::Entry::Vacant(entry) => {
                 entry.insert(StoredValue {
@@ -290,28 +291,6 @@ impl StorageEngine {
         if let (Some(at), Some(key_expire)) = (expire_at, key_for_expire) {
             self.expiration.schedule(key_expire, at);
         }
-    }
-
-    #[inline]
-    fn set_persistent(&self, key: &str, value: RedisData) {
-        if let Some(mut stored) = self.data.get_mut(key) {
-            let had_expiration = stored.expire_at.is_some();
-            stored.data = Arc::new(value);
-            stored.expire_at = None;
-            drop(stored);
-            if had_expiration {
-                self.expiration.cancel(key);
-            }
-            return;
-        }
-
-        self.data.insert(
-            key.to_string(),
-            StoredValue {
-                data: Arc::new(value),
-                expire_at: None,
-            },
-        );
     }
 
     /// Gets a value from the storage engine by key.
@@ -886,13 +865,13 @@ impl Client {
     /// * `K` - The key type (must be convertible to `String`)
     /// * `V` - The value type
     #[inline]
-    pub async fn set<K: AsRef<str>, V>(&mut self, key: K, value: V) -> RedisResult<()>
+    pub async fn set<K: Into<String>, V>(&mut self, key: K, value: V) -> RedisResult<()>
     where
         V: ToRedisArgs,
     {
+        let key_str = key.into();
         let val = Self::value_to_vec(&value);
-        self.storage
-            .set_persistent(key.as_ref(), RedisData::String(val));
+        self.storage.set(key_str, RedisData::String(val), None);
         Ok(())
     }
 
