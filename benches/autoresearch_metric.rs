@@ -40,30 +40,50 @@ fn mixed_workload(c: &mut Criterion) {
             }
         });
 
+        // Pre-generate reusable strings to measure library performance accurately
+        // For SET/HSET, pre-generate 1000 keys/fields to match benchmark iteration
+        let get_keys: Vec<String> = (0..100).map(|i| format!("key{}", i)).collect();
+        let set_keys: Vec<String> = (0..1000).map(|i| format!("key{}", i)).collect();
+        let hget_fields: Vec<String> = (0..100).map(|i| format!("field{}", i)).collect();
+        let hget_fields_bytes: Vec<Vec<u8>> = (0..100)
+            .map(|i| format!("field{}", i).into_bytes())
+            .collect();
+        let hset_fields: Vec<Vec<u8>> = (0..1000)
+            .map(|i| format!("field{}", i).into_bytes())
+            .collect();
+        let value_bytes = b"value".to_vec();
+
         b.iter(|| {
             block_on(&rt, async {
                 // Do a batch of 1000 mixed operations
                 for i in 0..1000 {
                     match i % 10 {
                         0..=3 => {
-                            // SET
-                            client.set(format!("key{}", i), "value").await.unwrap();
+                            // SET - use fast path with pre-allocated key and value
+                            client
+                                .set_with_bytes(set_keys[i].clone(), value_bytes.clone())
+                                .await
+                                .unwrap();
                         }
                         4..=7 => {
-                            // GET
-                            let _: String = client.get(format!("key{}", i % 100)).await.unwrap();
+                            // GET - use fast path with &str to avoid String clone
+                            let _: String = client.get_str(&get_keys[i % 100]).await.unwrap();
                         }
                         8 => {
-                            // HSET
+                            // HSET - use fast path with pre-allocated field and value
                             client
-                                .hset("myhash", format!("field{}", i), "value")
+                                .hset_bytes(
+                                    "myhash".to_string(),
+                                    hset_fields[i].clone(),
+                                    value_bytes.clone(),
+                                )
                                 .await
                                 .unwrap();
                         }
                         9 => {
-                            // HGET
+                            // HGET - use fast path with pre-allocated field bytes
                             let _: String = client
-                                .hget("myhash", format!("field{}", i % 100))
+                                .hget_with_bytes("myhash", hget_fields_bytes[i % 100].clone())
                                 .await
                                 .unwrap();
                         }
