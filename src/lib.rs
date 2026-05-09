@@ -262,7 +262,6 @@ impl StorageEngine {
     /// * `key` - The key to store
     /// * `value` - The data to store
     /// * `expire_at` - Optional expiration time
-    #[inline]
     pub fn set(&self, key: impl Into<String>, value: RedisData, expire_at: Option<Instant>) {
         let key = key.into();
         // If expiration is set, we will need the key later to schedule.
@@ -296,7 +295,6 @@ impl StorageEngine {
     /// Gets a value from the storage engine by key.
     ///
     /// Returns the stored value if the key exists and has not expired.
-    #[inline(always)]
     pub fn get(&self, key: &str) -> Option<StoredValue> {
         self.data.get(key).map(|v| v.clone())
     }
